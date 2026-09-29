@@ -32,7 +32,8 @@ button { color: inherit; }
 .icon-button, .panel-top button { display: grid; place-items: center; width: 29px; height: 29px; border: 1px solid transparent; border-radius: 7px; color: #8290a0; background: transparent; cursor: pointer; }
 .icon-button:hover, .panel-top button:hover { background: #1b2530; color: #dbe4ed; }
 .avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: #c5d9f2; background: #27394d; font-size: 11px; }
-.workspace-grid { display: grid; grid-template-columns: 45px minmax(0,1fr) 298px; gap: 0; flex: 1; min-height: 0; }
+.workspace-grid { direction: ltr; display: grid; grid-template-columns: 45px minmax(0,1fr) 298px; gap: 0; flex: 1; min-height: 0; }
+.toolrail, .main-stage, .right-panel { direction: rtl; }
 .toolrail { display: flex; flex-direction: column; align-items: center; gap: 7px; border-left: 1px solid #26313d; background: #10161e; padding: 13px 0; }
 .toolrail button { width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 7px; color: #778696; background: transparent; cursor: pointer; }
 .toolrail button:hover, .toolrail .rail-active { border-color: #294362; background: #19283a; color: #81b3f2; }
@@ -66,6 +67,9 @@ button { color: inherit; }
 .chart-empty strong { color: #e2eaf1; font-size: 13px; font-weight: 600; }
 .chart-empty > span { max-width: 330px; color: #8392a1; font-size: 10px; line-height: 1.7; }
 .chart-empty button { display: flex; align-items: center; gap: 7px; margin-top: 6px; border: 1px solid #38639a; border-radius: 6px; padding: 8px 15px; background: #264b75; color: #ebf4ff; cursor: pointer; font-size: 10px; }
+.chart-loading { background: #0c1117ee; }
+.loading-spinner { display: grid; place-items: center; width: 35px; height: 35px; border: 1px solid #31475f; border-radius: 10px; color: #91bce9; background: #172536; animation: spin 1.4s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .drawing-tip { position: absolute; z-index: 3; top: 12px; left: 50%; transform: translateX(-50%); padding: 6px 10px; border: 1px solid #33455a; border-radius: 5px; color: #a8c9ef; background: #182534; font-size: 10px; }
 .chart-footer { height: 24px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; color: #647283; font-size: 9px; }
 .chart-footer > span:first-child { display: flex; align-items: center; gap: 6px; }
