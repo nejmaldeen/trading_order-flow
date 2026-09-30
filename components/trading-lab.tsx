@@ -100,6 +100,10 @@ const riyadhInput = () => {
   const date = new Date("2024-01-01T12:00:00");
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 };
+const dateTimeInputValue = (timestamp: number) => {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+};
 const money = (value: number, digits = 2) =>
   new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
 const price = (value: number) => (value >= 1000 ? money(value, 1) : money(value, 3));
@@ -204,6 +208,7 @@ export default function TradingLab() {
   const [workspace, setWorkspace] = useState<Workspace>(blank);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [startDate, setStartDate] = useState(riyadhInput);
+  const startDateTouched = useRef(false);
   const [loading, setLoading] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [replaySpeed, setReplaySpeed] = useState(1);
@@ -243,6 +248,11 @@ export default function TradingLab() {
   const latest = candles.at(-1);
   const change = latest ? ((latest.close - latest.open) / latest.open) * 100 : 0;
   const longAvg = useMemo(() => computeDailyVwap(candles), [candles]);
+  const parsedStartDate = new Date(startDate).getTime();
+  const selectedStartTime = Number.isFinite(parsedStartDate)
+    ? Math.floor(parsedStartDate / 60_000) * 60_000
+    : null;
+  const selectedDateDiffers = Boolean(session && selectedStartTime !== session.startTime);
 
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setLoading(true);
@@ -253,7 +263,10 @@ export default function TradingLab() {
       const nextWorkspace = payload.state ?? blank;
       setWorkspace(nextWorkspace);
       const nextSession = nextWorkspace.sessions.find((item) => item.id === nextWorkspace.activeSessionId);
-      if (nextSession) setCandles(await fetchChartCandles(nextSession, timeframe));
+      if (nextSession) {
+        if (!startDateTouched.current) setStartDate(dateTimeInputValue(nextSession.startTime));
+        setCandles(await fetchChartCandles(nextSession, timeframe));
+      }
       else setCandles([]);
       setError(payload.error ?? "");
     } catch (err) {
@@ -420,15 +433,19 @@ export default function TradingLab() {
     if (drawnPrice !== null) priceLinesRef.current.push(series.createPriceLine({ price: drawnPrice, color: "#a78bfa", lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: "مستوى" }));
   }, [openTrade, drawnPrice, candles]);
 
-  const startReplay = async () => {
-    const startTime = new Date(startDate).getTime();
-    if (!Number.isFinite(startTime)) {
+  const startReplay = async (autoPlay = false) => {
+    const rawStartTime = new Date(startDate).getTime();
+    if (!Number.isFinite(rawStartTime)) {
       setError("أدخل تاريخًا ووقتًا صحيحين للبداية.");
       return;
     }
+    const startTime = Math.floor(rawStartTime / 60_000) * 60_000;
     setPlaying(false);
     const ok = await act({ action: "start", symbol, startTime });
-    if (ok) setDrawnPrice(null);
+    if (ok) {
+      setDrawnPrice(null);
+      if (autoPlay) setPlaying(true);
+    }
   };
   const submitLong = async () => {
     const close = latest?.close;
@@ -459,12 +476,12 @@ export default function TradingLab() {
             <div className="periods">{periods.map((period) => <button key={period.key} onClick={() => setTimeframe(period.key)} className={timeframe === period.key ? "selected" : ""}>{period.label}</button>)}<span className="toolbar-separator" /><button title="المؤشرات" onClick={() => setShowVwap(!showVwap)} className={showVwap ? "selected" : ""}><LineChart size={15} /><span>المؤشرات</span></button><button title="ملء الشاشة"><Maximize2 size={15} /></button></div>
           </div>
           <div className="ohlc-strip"><span>{fmtDate(session?.cursorTime ?? null)}</span>{latest && <><span>فتح <b>{price(latest.open)}</b></span><span>أعلى <b className="positive">{price(latest.high)}</b></span><span>أدنى <b className="negative">{price(latest.low)}</b></span><span>إغلاق <b>{price(latest.close)}</b></span><span>حجم <b>{money(latest.volume, 2)}</b></span></>}</div>
-          <div className="chart-area"><div className="chart-caption"><span>{currentSymbol.slice(0, -4)} / TetherUS · {periods.find((p) => p.key === timeframe)?.label} · Binance</span><div><button onClick={() => setShowVolume(!showVolume)} className={showVolume ? "caption-active" : ""}><BarChart3 size={13} /> الحجم</button>{showVwap && <span className="vwap-key"><i /> VWAP يومي*</span>}</div></div><div className={`chart-host ${drawing ? "drawing-mode" : ""}`} ref={chartHost}>{loading && candles.length === 0 ? <div className="chart-empty chart-loading"><span className="loading-spinner"><Activity size={18} /></span><strong>جار استعادة الجلسة والشموع</strong><span>نحمّل بيانات السوق حتى نقطة Replay المحفوظة.</span></div> : !session && <div className="chart-empty"><div className="empty-icon"><CalendarDays size={21} /></div><strong>اختر لحظة تاريخية وابدأ التدريب</strong><span>ستظهر الشموع تدريجيًا مع تحريك Replay، دون كشف بيانات لاحقة.</span><button onClick={startReplay} disabled={loading}><Play size={14} fill="currentColor" /> ابدأ Replay</button></div>}{drawing && <span className="drawing-tip">انقر على الشارت لإضافة مستوى سعري</span>}</div><div className="chart-footer"><span><span className="legend-candle green" /> صاعد <span className="legend-candle red" /> هابط</span><span>TradingView Lightweight Charts™</span><span className="timezone">التوقيت المحلي <ChevronDown size={12} /></span></div></div>
+          <div className="chart-area"><div className="chart-caption"><span>{currentSymbol.slice(0, -4)} / TetherUS · {periods.find((p) => p.key === timeframe)?.label} · Binance</span><div><button onClick={() => setShowVolume(!showVolume)} className={showVolume ? "caption-active" : ""}><BarChart3 size={13} /> الحجم</button>{showVwap && <span className="vwap-key"><i /> VWAP يومي*</span>}</div></div><div className={`chart-host ${drawing ? "drawing-mode" : ""}`} ref={chartHost}>{loading && candles.length === 0 ? <div className="chart-empty chart-loading"><span className="loading-spinner"><Activity size={18} /></span><strong>جار استعادة الجلسة والشموع</strong><span>نحمّل بيانات السوق حتى نقطة Replay المحفوظة.</span></div> : (!session || candles.length === 0) && <div className="chart-empty"><div className="empty-icon"><CalendarDays size={21} /></div><strong>{session ? "لا توجد شموع لهذه الفترة" : "اختر لحظة تاريخية وابدأ التدريب"}</strong><span>{session ? "قد لا تتوفر بيانات Binance لهذا الأصل والتاريخ. اختر تاريخًا ضمن فترة تداول الأصل." : "ستظهر الشموع تدريجيًا مع تحريك Replay، دون كشف بيانات لاحقة."}</span>{!session && <button onClick={() => void startReplay()} disabled={loading}><Play size={14} fill="currentColor" /> ابدأ Replay</button>}</div>}{drawing && <span className="drawing-tip">انقر على الشارت لإضافة مستوى سعري</span>}</div><div className="chart-footer"><span><span className="legend-candle green" /> صاعد <span className="legend-candle red" /> هابط</span><span>TradingView Lightweight Charts™</span><span className="timezone">التوقيت المحلي <ChevronDown size={12} /></span></div></div>
 
           <section className="replay-panel">
             <div className="replay-title"><div className="replay-symbol"><RotateCcw size={15} /></div><div><strong>إعادة تشغيل السوق</strong><small>{session ? `الجلسة بدأت في ${fmtDate(session.startTime)}` : "حدد التاريخ والأصل لبدء جلسة جديدة"}</small></div><span className="replay-status"><i /> Replay</span></div>
-            <div className="replay-controls"><button className="play-button" onClick={() => { if (!session) void startReplay(); else setPlaying(!playing); }} disabled={loading}>{playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><button className="step-button" onClick={() => session ? void advanceStep() : void startReplay()} disabled={loading} title="شمعة واحدة"><SkipForward size={16} /></button><select aria-label="سرعة التشغيل" value={replaySpeed} onChange={(event) => setReplaySpeed(Number(event.target.value))}><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select><div className="replay-line"><span className="replay-dot" style={{ left: `${Math.max(0, Math.min(100, ((session?.advancedBars ?? 0) % 120) / 1.2))}%` }} /></div><span className="bar-count">{session?.advancedBars ?? 0} <i>خطوة</i></span><button className="reset-button" onClick={() => { setPlaying(false); setStartDate(riyadhInput()); }} title="تاريخ جديد"><RotateCcw size={14} /></button></div>
-            <div className="replay-date"><span><CalendarDays size={14} /> تاريخ البداية</span><input type="datetime-local" value={startDate} onChange={(event) => setStartDate(event.target.value)} /><button onClick={startReplay} disabled={loading}><Play size={12} fill="currentColor" /> {session ? "جلسة جديدة" : "ابدأ الجلسة"}</button><span className="replay-privacy"><ShieldCheck size={13} /> لا توجد صفقات حقيقية</span></div>
+            <div className="replay-controls"><button className="play-button" title={selectedDateDiffers ? "ابدأ التشغيل من الوقت المحدد" : playing ? "إيقاف Replay" : "تشغيل Replay"} aria-label={selectedDateDiffers ? "ابدأ Replay من الوقت المحدد" : playing ? "إيقاف Replay" : "تشغيل Replay"} onClick={() => { if (!session || selectedDateDiffers) void startReplay(true); else setPlaying(!playing); }} disabled={loading}>{playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button><button className="step-button" onClick={() => session ? void advanceStep() : void startReplay()} disabled={loading} title="شمعة واحدة"><SkipForward size={16} /></button><select aria-label="سرعة التشغيل" value={replaySpeed} onChange={(event) => setReplaySpeed(Number(event.target.value))}><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select><div className="replay-line"><span className="replay-dot" style={{ left: `${Math.max(0, Math.min(100, ((session?.advancedBars ?? 0) % 120) / 1.2))}%` }} /></div><span className="bar-count">{session?.advancedBars ?? 0} <i>خطوة</i></span><button className="reset-button" onClick={() => { setPlaying(false); startDateTouched.current = false; setStartDate(riyadhInput()); }} title="التاريخ الافتراضي"><RotateCcw size={14} /></button></div>
+            <div className="replay-date"><span><CalendarDays size={14} /> تاريخ البداية</span><input type="datetime-local" value={startDate} onChange={(event) => { startDateTouched.current = true; setStartDate(event.target.value); }} /><button onClick={() => void startReplay()} disabled={loading} title="ابدأ جلسة جديدة من التاريخ والوقت المحددين"><Play size={12} fill="currentColor" /> {session ? "ابدأ من التاريخ" : "ابدأ الجلسة"}</button><span className="replay-privacy"><ShieldCheck size={13} /> لا توجد صفقات حقيقية</span></div>
           </section>
 
           <section className="history-panel"><div className="history-head"><div className="history-tabs"><button onClick={() => setTab("trades")} className={tab === "trades" ? "active" : ""}>الصفقات <span>{sessionTrades.length}</span></button><button onClick={() => setTab("journal")} className={tab === "journal" ? "active" : ""}><BookOpenCheck size={14} /> دفتر التداول</button></div><button className="export-button"><Eye size={13} /> عرض الكل</button></div>{tab === "trades" ? <div className="table-wrap"><table><thead><tr><th>الأصل</th><th>النوع</th><th>الدخول</th><th>الخروج</th><th>الكمية</th><th>النتيجة</th><th>الحالة</th><th>الوقت</th></tr></thead><tbody>{sessionTrades.length ? sessionTrades.slice().reverse().map((trade) => <tr key={trade.id}><td><span className="tiny-coin">{trade.symbol === "BTCUSDT" ? "₿" : "Ξ"}</span>{trade.symbol.slice(0, -4)}/USDT</td><td><span className="side-long">شراء</span></td><td>{trade.entryPrice ? price(trade.entryPrice) : "سعر الشمعة التالية"}</td><td>{trade.exitPrice ? price(trade.exitPrice) : "—"}</td><td>{trade.quantity ? money(trade.quantity, 5) : money(trade.notional, 2) + " USDT"}</td><td className={trade.realizedPnl >= 0 ? "positive" : "negative"}>{trade.status === "closed" ? `${trade.realizedPnl >= 0 ? "+" : ""}${money(trade.realizedPnl)}` : "—"}</td><td><span className={`status-pill ${trade.status}`}>{trade.status === "pending" ? "معلق" : trade.status === "open" ? "مفتوح" : trade.status === "close_pending" ? "إغلاق معلّق" : trade.status === "closed" ? "مغلق" : "ملغى"}</span></td><td>{fmtDate(trade.entryTime ?? trade.createdAt)}</td></tr>) : <tr><td colSpan={8} className="table-empty">لا توجد صفقات في هذه الجلسة بعد. استخدم لوحة الأوامر للتدرب.</td></tr>}</tbody></table></div> : <div className="journal-list">{sessionTrades.filter((trade) => trade.reason.trim()).length ? sessionTrades.filter((trade) => trade.reason.trim()).slice().reverse().map((trade) => <article key={trade.id}><div><BookOpenCheck size={14} /><span>{fmtDate(trade.entryTime ?? trade.createdAt)}</span><b className={trade.realizedPnl >= 0 ? "positive" : "negative"}>{trade.status === "closed" ? `${trade.realizedPnl >= 0 ? "+" : ""}${money(trade.realizedPnl)} USDT` : "قيد المتابعة"}</b></div><p>{trade.reason}</p></article>) : <div className="journal-empty"><BookOpenCheck size={18} /><span>لم تُسجّل مبررات دخول بعد. أضف مبررًا قبل تنفيذ صفقة.</span><button onClick={() => setTab("trades")}>العودة إلى لوحة الأمر</button></div>}</div>}</section>
