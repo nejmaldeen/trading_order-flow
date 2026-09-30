@@ -44,6 +44,7 @@ type PaperTrade = {
   exitFee: number;
   realizedPnl: number;
   rMultiple: number | null;
+  initialRisk: number | null;
   reason: string;
   entryTime: number | null;
   exitTime: number | null;
@@ -67,18 +68,7 @@ const actionSchema = z.discriminatedUnion("action", [
     symbol: z.enum(SYMBOLS),
     startTime: z.number().int().positive(),
   }),
-  z.object({
-    action: z.literal("step"),
-    candle: z.object({
-      openTime: z.number().int().positive(),
-      closeTime: z.number().int().positive(),
-      open: z.number().positive(),
-      high: z.number().positive(),
-      low: z.number().positive(),
-      close: z.number().positive(),
-      volume: z.number().nonnegative(),
-    }),
-  }),
+  z.object({ action: z.literal("step"), count: z.number().int().min(1).max(64).default(1) }),
   z.object({
     action: z.literal("buy"),
     notional: z.number().positive().max(100_000),
@@ -154,7 +144,7 @@ function finishTrade(trade: PaperTrade, fill: number, closeTime: number) {
   trade.exitFee = fill * trade.quantity * FEE_RATE;
   trade.realizedPnl =
     (fill - trade.entryPrice) * trade.quantity - trade.entryFee - trade.exitFee;
-  const initialRisk = (trade.entryPrice - trade.stopLoss) * trade.quantity;
+  const initialRisk = trade.initialRisk ?? (trade.entryPrice - trade.stopLoss) * trade.quantity;
   trade.rMultiple = initialRisk > 0 ? trade.realizedPnl / initialRisk : null;
   trade.status = "closed";
 }
@@ -167,6 +157,7 @@ function applyCandle(state: WorkspaceState, session: ReplaySession, candle: Klin
       trade.entryPrice = fill;
       trade.quantity = trade.notional / fill;
       trade.entryFee = trade.notional * FEE_RATE;
+      trade.initialRisk = Math.max(fill - trade.stopLoss, 0) * trade.quantity;
       trade.entryTime = candle.openTime;
       trade.status = "open";
     }
@@ -229,21 +220,57 @@ export async function POST(request: Request) {
     if (!session) return json({ error: "ابدأ جلسة Replay أولًا." }, 409);
 
     if (input.data.action === "step") {
-      const candle = input.data.candle;
       const expectedOpen = session.cursorTime + 1;
-      if (
-        candle.openTime !== expectedOpen ||
-        candle.closeTime !== candle.openTime + 59_999 ||
-        candle.high < Math.max(candle.open, candle.close, candle.low) ||
-        candle.low > Math.min(candle.open, candle.close, candle.high)
-      ) {
-        return json({ error: "شمعة Replay لا تطابق الدقيقة التالية زمنيًا." }, 400);
+      const latestCompletedOpen = Math.floor((Date.now() - 60_000) / 60_000) * 60_000;
+      if (expectedOpen > latestCompletedOpen) {
+        return json({ error: "وصلت إلى أحدث شمعة مكتملة متاحة في Replay." }, 409);
       }
-      session.cursorTime = candle.closeTime;
-      session.advancedBars += 1;
-      applyCandle(state, session, candle);
+      const availableCount = Math.min(
+        input.data.count,
+        Math.floor((latestCompletedOpen - expectedOpen) / 60_000) + 1,
+      );
+      const query = new URLSearchParams({
+        symbol: session.symbol,
+        interval: "1m",
+        startTime: String(expectedOpen),
+        endTime: String(expectedOpen + availableCount * 60_000 - 1),
+        limit: String(availableCount),
+      });
+      const response = await fetch(`https://data-api.binance.vision/api/v3/klines?${query}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) return json({ error: `تعذر جلب بيانات Binance (${response.status}).` }, 502);
+      const rows = (await response.json()) as Array<Array<string | number>>;
+      const candles: Kline[] = rows.map((row) => ({
+        openTime: Number(row[0]),
+        open: Number(row[1]),
+        high: Number(row[2]),
+        low: Number(row[3]),
+        close: Number(row[4]),
+        volume: Number(row[5]),
+        closeTime: Number(row[6]),
+      }));
+      if (!candles.length) return json({ error: "لا توجد شمعة تالية لهذه الفترة." }, 404);
+      for (const [index, candle] of candles.entries()) {
+        const expectedCandleOpen = expectedOpen + index * 60_000;
+        if (
+          ![candle.openTime, candle.closeTime, candle.open, candle.high, candle.low, candle.close, candle.volume].every(Number.isFinite) ||
+          candle.open <= 0 || candle.high <= 0 || candle.low <= 0 || candle.close <= 0 || candle.volume < 0 ||
+          candle.openTime !== expectedCandleOpen ||
+          candle.closeTime !== candle.openTime + 59_999 ||
+          candle.high < Math.max(candle.open, candle.close, candle.low) ||
+          candle.low > Math.min(candle.open, candle.close, candle.high)
+        ) {
+          return json({ error: "بيانات الشموع لا تطابق التسلسل الزمني المتوقع." }, 502);
+        }
+      }
+      for (const candle of candles) {
+        session.cursorTime = candle.closeTime;
+        session.advancedBars += 1;
+        applyCandle(state, session, candle);
+      }
       await saveWorkspace(id, state);
-      return json({ state, candle });
+      return json({ state, candles });
     }
 
     if (input.data.action === "buy") {
@@ -283,6 +310,7 @@ export async function POST(request: Request) {
         exitFee: 0,
         realizedPnl: 0,
         rMultiple: null,
+        initialRisk: null,
         reason: input.data.reason,
         entryTime: null,
         exitTime: null,
@@ -319,13 +347,16 @@ export async function POST(request: Request) {
         (item) =>
           item.id === tradeId &&
           item.sessionId === session.id &&
-          item.status === "open",
+          ["pending", "open"].includes(item.status),
       );
-      if (!trade || trade.entryPrice === null) {
-        return json({ error: "الصفقة المفتوحة غير موجودة." }, 404);
+      if (!trade) {
+        return json({ error: "الأمر أو الصفقة المفتوحة غير موجودة." }, 404);
       }
-      if (input.data.stopLoss >= trade.entryPrice || input.data.takeProfit <= trade.entryPrice) {
-        return json({ error: "يجب أن يبقى الوقف تحت الدخول والهدف فوقه." }, 400);
+      if (
+        input.data.stopLoss >= input.data.takeProfit ||
+        (trade.entryPrice !== null && input.data.takeProfit <= trade.entryPrice)
+      ) {
+        return json({ error: "يجب أن يكون الهدف فوق سعر الدخول والوقف تحت الهدف." }, 400);
       }
       trade.stopLoss = input.data.stopLoss;
       trade.takeProfit = input.data.takeProfit;
