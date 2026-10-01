@@ -371,3 +371,64 @@ th:first-child, td:first-child { padding-right: 16px; } th:last-child, td:last-c
 .top-actions .icon-button[title="إعدادات العرض"] { display:grid; }
 .legend-candle.green { background:#329dff; }
 .buy-button { margin-top:14px; }
+
+/* Replay studio: neutral surfaces and a chart-wide bottom control dock. */
+.trading-shell, .chart-area, .main-stage:fullscreen { background:#101012; }
+.topbar, .toolrail, .right-panel, .statusbar, .chart-toolbar, .chart-navigation, .replay-panel { background:#151517; border-color:#303036; }
+.topbar { height:46px; gap:18px; }
+.brand { width:auto; }.brand small { display:none; }
+.brand-mark { background:#272333; border-color:#514263; color:#bb9cfb; }
+.connection, .avatar, .asset-price, .symbol-meta small { display:none; }
+.toolrail { border-color:#303036; }
+.toolrail button:hover, .toolrail .rail-active { background:#2c2b32; border-color:#4c4857; color:#e2d7fa; }
+.chart-toolbar { min-height:44px; }
+.periods button.selected { background:#303036; border-color:#4c4c54; color:#fafafa; }
+.chart-navigation { min-height:30px; }
+.chart-navigation button { font-size:12px; padding:2px 8px; min-height:27px; }
+.chart-caption { min-height:26px; height:auto; flex-wrap:wrap; gap:5px; }
+.active-indicators { display:flex; gap:8px; }
+.active-indicators button { color:#b4a2e5; }
+.ohlc-strip { height:24px; }
+.history-head { background:#19191d; }
+.replay-panel { display:block; position:relative; border-top:1px solid #36363d; padding:7px 12px; }
+.replay-title { font-size:12px; }
+.replay-title strong { font-size:12px; color:#a19aaa; }
+.replay-controls { display:flex; gap:8px; margin-top:6px; }
+.play-button, .step-button { background:#2e2e36; border-color:#494952; color:#fafafa; }
+.play-button:hover:not(:disabled), .step-button:hover:not(:disabled) { background:#44434f; }
+.replay-controls select { background:#202025; border-color:#414149; }
+.replay-ticket { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-inline-start:auto; }
+.replay-ticket label { display:flex; align-items:center; gap:7px; font-size:13px; }
+.replay-ticket input { width:86px; height:34px; border:1px solid #46444f; border-radius:5px; padding:4px 7px; background:#1f1f25; color:#fff; direction:ltr; font-size:14px; }
+.replay-ticket button { min-height:34px; border:1px solid #46444f; border-radius:5px; padding:4px 10px; background:#232329; color:#ddd; cursor:pointer; font-size:13px; }
+.replay-ticket .ticket-open { color:#4fdbc0; border-color:#347469; }
+.replay-session { margin-top:6px; }
+.replay-session summary { cursor:pointer; color:#b6adca; font-size:12px; width:fit-content; padding:3px 0; }
+.replay-session[open] { border-top:1px solid #343039; padding-top:6px; }
+.replay-date { justify-content:flex-start; }
+.replay-explanation { font-size:12px; margin:4px 0 0; color:#8f8c9c; }
+.layout-button, .entry-price-field input, .input-with-unit, .risk-fields input { background:#1d1d24; border-color:#45434f; }
+.buy-button { background:#146a5a; border-color:#2f9c84; }.buy-button:hover:not(:disabled) { background:#218773; }
+.cash-breakdown { background:#17171d; border-color:#35353e; }
+.legend-candle.green { background:#00b89c; }
+.indicator-dialog { width:min(960px,calc(100vw - 40px)); max-height:min(740px,calc(100dvh - 60px)); padding:24px; border:1px solid #3e3e46; border-radius:12px; background:#1d1d20; color:#e8e8ed; margin:auto; box-shadow:0 24px 100px #000a; overflow:auto; }
+.indicator-dialog::backdrop { background:#0009; }
+.indicator-dialog header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+.indicator-dialog h2 { display:flex; gap:10px; align-items:center; margin:0; font-size:22px; }
+.indicator-dialog button { cursor:pointer; }
+.indicator-dialog header button { border:0; color:#a4a4b1; background:transparent; padding:5px; }
+.indicator-search { display:flex; gap:10px; align-items:center; border:1px solid #484850; border-radius:8px; padding:10px 14px; color:#9a9aa7; }
+.indicator-search input { background:transparent; border:0; outline:none; color:#eee; width:100%; font-size:16px; }
+.indicator-browser { display:grid; grid-template-columns:180px minmax(0,1fr); gap:22px; margin-top:24px; min-height:340px; }
+.indicator-browser nav { display:flex; flex-direction:column; gap:6px; }
+.indicator-browser nav button { text-align:right; padding:12px; background:transparent; border:0; color:#d8d8e1; border-radius:6px; font-size:14px; }
+.indicator-browser nav button[aria-pressed=true] { background:#323139; }
+.indicator-browser nav p, .indicator-footnote { font-size:12px; line-height:1.8; color:#9794a4; }
+.indicator-results article { display:grid; grid-template-columns:28px minmax(0,1fr) 65px; gap:10px; align-items:start; padding:16px 0; border-bottom:1px solid #34343b; }
+.indicator-results h3 { margin:0; font-size:15px; font-weight:550; }.indicator-results h3 small { display:block; font-size:12px; color:#aaa6ba; margin-top:4px; }
+.indicator-results p { color:#a3a1af; font-size:13px; margin:8px 0; line-height:1.7; }
+.favorite-indicator { background:transparent; border:0; color:#84828f; padding:3px; }.favorite-indicator[aria-pressed=true] { color:#d8bd74; }
+.toggle-indicator { padding:7px; border:1px solid #53515e; background:#32303a; border-radius:5px; font-size:13px; }.toggle-indicator[aria-pressed=true] { background:#1c3b33; color:#68dac1; border-color:#326a5a; }
+.indicator-period { display:flex; gap:8px; align-items:center; font-size:12px; color:#aaa; }.indicator-period input { width:65px; background:#17171c; border:1px solid #43414e; border-radius:4px; padding:5px; color:#eee; direction:ltr; }
+.indicator-empty { padding:50px 20px; color:#aaa; text-align:center; line-height:1.8; }
+@media(max-width:800px) { .replay-ticket { width:100%; margin:0; }.replay-title strong { display:none; }.cursor-time { width:auto; margin-inline-start:auto; }.indicator-dialog { padding:16px; }.indicator-browser { grid-template-columns:1fr; gap:8px; }.indicator-browser nav { flex-direction:row; flex-wrap:wrap; }.indicator-browser nav p { display:none; }.topbar { gap:7px; } }
