@@ -119,6 +119,15 @@ export default function TradingLab() {
   const [startDate, setStartDate] = useState(riyadhInput);
   const startDateTouched = useRef(false);
   const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [historyAvailable, setHistoryAvailable] = useState(true);
+  const historyBusy = useRef(false);
+  const historyAbort = useRef<AbortController | null>(null);
+  const historyEpoch = useRef(0);
+  const olderLoadRef = useRef<() => void>(()=>{});
+  const candlesRef = useRef<Candle[]>([]);
+  const renderedFirst = useRef<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [replaySpeed, setReplaySpeed] = useState(1);
@@ -201,6 +210,7 @@ export default function TradingLab() {
   const advanceStepRef = useRef<(count?: number) => Promise<void>>(async () => undefined);
 
   const session = workspace.sessions.find((item) => item.id === workspace.activeSessionId) ?? null;
+  candlesRef.current=candles;
   const currentSymbol = session?.symbol ?? symbol;
   const sessionTrades = workspace.trades.filter((trade) => trade.sessionId === session?.id);
   const openTrade = sessionTrades.find((trade) => ["pending", "open", "close_pending"].includes(trade.status)) ?? null;
@@ -227,6 +237,7 @@ export default function TradingLab() {
 
   const load = useCallback(async (_showSpinner = false) => {
     if (actionBusy.current) return;
+    historyEpoch.current++; historyAbort.current?.abort(); setHistoryAvailable(true); setHistoryError("");
     actionBusy.current = true;
     setLoading(true); setDataReady(false); setPlaying(false); playingRef.current=false;
     try {
@@ -256,8 +267,36 @@ export default function TradingLab() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
+  useEffect(()=>{
+    historyEpoch.current++;historyAbort.current?.abort();historyBusy.current=false;
+    setHistoryLoading(false);setHistoryError("");setHistoryAvailable(true);
+    return ()=>{historyEpoch.current++;historyAbort.current?.abort();};
+  },[session?.id,timeframe]);
+
+  const loadOlder = useCallback(async()=>{
+    const first=candlesRef.current[0];
+    if(!session||!first||!dataReady||historyBusy.current||!historyAvailable||actionBusy.current)return;
+    historyBusy.current=true;setHistoryLoading(true);setHistoryError("");
+    const epoch=historyEpoch.current, controller=new AbortController();historyAbort.current=controller;
+    const timer=window.setTimeout(()=>controller.abort(),60000);
+    try {
+      const response=await fetch(`/api/lab?timeframe=${timeframe}&sessionId=${session.id}&before=${first.openTime}`,{cache:"no-store",signal:controller.signal});
+      const payload=await response.json() as {sessionId?:string;candles?:Candle[];hasMore?:boolean;error?:string};
+      if(epoch!==historyEpoch.current)return;
+      if(!response.ok)throw new Error(payload.error||"تعذر تحميل التاريخ الأقدم.");
+      if(payload.sessionId!==session.id)return;
+      const older=(payload.candles??[]).filter(c=>c.openTime<first.openTime&&c.closeTime<first.openTime);
+      followChart.current=false;
+      setCandles(current=>{if(!current.length||current[0].openTime!==first.openTime)return current;return [...older,...current];});
+      setHistoryAvailable(payload.hasMore===true);
+    } catch(err) { if(epoch===historyEpoch.current)setHistoryError(err instanceof Error&&err.name!=="AbortError"?err.message:"انتهت مهلة تحميل التاريخ؛ أعد المحاولة."); }
+    finally {window.clearTimeout(timer);if(historyAbort.current===controller){historyBusy.current=false;setHistoryLoading(false);}}
+  },[session?.id,timeframe,dataReady,historyAvailable]);
+  olderLoadRef.current=()=>{if(!historyError)void loadOlder();};
+
   const act = useCallback(async (body: Record<string, unknown>) => {
     if (actionBusy.current) return false;
+    if(body.action==="start") {historyEpoch.current++;historyAbort.current?.abort();setHistoryAvailable(true);setHistoryError("");}
     actionBusy.current = true;
     setLoading(true);
     setError("");
@@ -362,6 +401,14 @@ export default function TradingLab() {
       if (selected !== null) setDrawnPrice(selected);
       setDrawing(false);
     });
+    let historyTimer:number|undefined;
+    const olderRange=(range:{from:number;to:number}|null)=>{
+      window.clearTimeout(historyTimer);
+      if(range&&range.from<40&&!followChart.current){historyTimer=window.setTimeout(()=>olderLoadRef.current(),200);}
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(olderRange);
+    const browsing=()=>{followChart.current=false;};
+    host.addEventListener('wheel',browsing,{passive:true});
     const resize = new ResizeObserver(() => chart.applyOptions({ width: host.clientWidth, height: host.clientHeight }));
     resize.observe(host);
     chartRef.current = chart;
@@ -370,6 +417,7 @@ export default function TradingLab() {
     vwapSeries.current = vwapRef;
     markersRef.current = markerPlugin;
     return () => {
+      window.clearTimeout(historyTimer);chart.timeScale().unsubscribeVisibleLogicalRangeChange(olderRange);host.removeEventListener("wheel",browsing);
       resize.disconnect();
       chart.remove();
       chartRef.current = null;
@@ -390,7 +438,12 @@ export default function TradingLab() {
       low: candle.low,
       close: candle.close,
     }));
+    const previousFirst=renderedFirst.current;
+    const inserted=previousFirst===null?0:candles.findIndex(c=>c.openTime===previousFirst);
+    const visibleRange=!followChart.current&&inserted>0?chartRef.current.timeScale().getVisibleLogicalRange():null;
     candleSeries.current.setData(chartData);
+    renderedFirst.current=candles[0]?.openTime??null;
+    if(visibleRange)chartRef.current.timeScale().setVisibleLogicalRange({from:visibleRange.from+inserted,to:visibleRange.to+inserted});
     volumeSeries.current?.setData(candles.map((candle) => ({
       time: (candle.openTime / 1000) as UTCTimestamp,
       value: candle.volume,
@@ -624,7 +677,7 @@ export default function TradingLab() {
             <div className="symbol-meta"><span className="market-icon">{currentSymbol === "BTCUSDT" ? "₿" : "Ξ"}</span><div><strong>{currentSymbol.slice(0, -4)} / TetherUS</strong><small>Binance · السوق الفوري</small></div><span className="market-state"><i /> السوق مغلق · تاريخي</span></div>
             <div className="periods">{periods.map((period) => <button key={period.key} disabled={loading || playing} onClick={() => { setDataReady(false); setCandles([]); setTimeframe(period.key); }} className={timeframe === period.key ? "selected" : ""}>{period.label}</button>)}<span className="toolbar-separator" /><button title="المؤشرات" onClick={() => setIndicatorsOpen(true)}><LineChart size={17} /><span>المؤشرات</span></button><button title={isFullscreen ? "الخروج من ملء الشاشة" : "ملء الشاشة"} aria-label={isFullscreen ? "الخروج من ملء الشاشة" : "ملء الشاشة"} onClick={() => void toggleFullscreen()}><Maximize2 size={15} /></button></div>
           </div>
-          <div className="chart-navigation"><button onClick={()=>zoom(.8)} aria-label="تكبير الشارت">＋ تكبير</button><button onClick={()=>zoom(1.25)} aria-label="تصغير الشارت">− تصغير</button><button onClick={()=>{followChart.current=true;chartRef.current?.timeScale().scrollToPosition(8, false);}}>آخر شمعة</button><button onClick={resetView}>ضبط العرض</button><button onClick={()=>setLayout(v=>({...v,historyOpen:!v.historyOpen}))}>{layout.historyOpen?"طي السجل":"السجل والصفقات"}</button></div>
+          <div className="chart-navigation"><button disabled={historyLoading||!historyAvailable||!dataReady||loading} onClick={()=>void loadOlder()}>{historyLoading?"جار تحميل الشموع…":historyAvailable?"تحميل 500 شمعة أقدم":"بداية التاريخ المتاح"}</button><span className="history-count">{candles.length.toLocaleString("en-US")} شمعة</span>{historyError&&<span className="older-error" role="alert">{historyError}</span>}<button onClick={()=>zoom(.8)} aria-label="تكبير الشارت">＋ تكبير</button><button onClick={()=>zoom(1.25)} aria-label="تصغير الشارت">− تصغير</button><button onClick={()=>{followChart.current=true;chartRef.current?.timeScale().scrollToPosition(8, false);}}>آخر شمعة</button><button onClick={resetView}>ضبط العرض</button><button onClick={()=>setLayout(v=>({...v,historyOpen:!v.historyOpen}))}>{layout.historyOpen?"طي السجل":"السجل والصفقات"}</button></div>
           <div className="ohlc-strip"><span>{fmtDate(session?.cursorTime ?? null)}</span>{latest && <><span>فتح <b>{price(latest.open)}</b></span><span>أعلى <b className="positive">{price(latest.high)}</b></span><span>أدنى <b className="negative">{price(latest.low)}</b></span><span>إغلاق <b>{price(latest.close)}</b></span><span>حجم <b>{money(latest.volume, 2)}</b></span></>}</div>
           <div className="chart-area"><div className="chart-caption"><div className="active-indicators">{(Object.keys(indicators) as IndicatorKey[]).filter(k=>indicators[k].enabled).map(k=><button key={k} onClick={()=>setIndicatorsOpen(true)}>{k=== "bands" ? "BB" : k.toUpperCase()} {indicators[k].period}</button>)}</div><span>{currentSymbol.slice(0, -4)} / TetherUS · {periods.find((p) => p.key === timeframe)?.label} · Binance</span><div><span className="risk-drag-hint">اسحب خط الوقف أو الهدف لتعديله</span><button onClick={() => setShowVolume(!showVolume)} className={showVolume ? "caption-active" : ""}><BarChart3 size={13} /> الحجم</button>{showVwap && <span className="vwap-key"><i /> VWAP يومي*</span>}</div></div><div className={`chart-host ${drawing ? "drawing-mode" : ""}`} ref={chartHost} onWheel={()=>{followChart.current=false;}}>{loading && candles.length === 0 ? <div className="chart-empty chart-loading"><span className="loading-spinner"><Activity size={18} /></span><strong>جار استعادة الجلسة والشموع</strong><span>نحمّل بيانات السوق حتى نقطة Replay المحفوظة.</span></div> : (!session || candles.length === 0) && <div className="chart-empty"><div className="empty-icon"><CalendarDays size={21} /></div><strong>{session ? "لا توجد شموع لهذه الفترة" : "اختر لحظة تاريخية وابدأ التدريب"}</strong><span>{session ? "قد لا تتوفر بيانات Binance لهذا الأصل والتاريخ. اختر تاريخًا ضمن فترة تداول الأصل." : "ستظهر الشموع تدريجيًا مع تحريك Replay، دون كشف بيانات لاحقة."}</span>{!session && <button onClick={() => void startReplay()} disabled={loading}><Play size={14} fill="currentColor" /> ابدأ Replay</button>}</div>}{drawing && <span className="drawing-tip">انقر على الشارت لإضافة مستوى سعري</span>}</div><div className="chart-footer"><span><span className="legend-candle green" /> صاعد <span className="legend-candle red" /> هابط</span><span>TradingView Lightweight Charts™</span><span className="timezone">التوقيت المحلي <ChevronDown size={12} /></span></div></div>
 

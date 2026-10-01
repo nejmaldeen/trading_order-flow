@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { workspaces } from "@/db/schema";
 import { activeSession, advance, blank, event, FEE_RATE, INITIAL_BALANCE, normalizeWorkspace, SYMBOLS, DURATIONS, type Workspace, type Trade, type Session, type Timeframe } from "@/lib/replay";
-import { chartHistory, marketData, MarketError } from "@/lib/market-data";
+import { chartHistory, olderHistory, marketData, MarketError } from "@/lib/market-data";
 
 export const dynamic = "force-dynamic";
 const actionSchema=z.discriminatedUnion("action",[
@@ -38,6 +38,14 @@ export async function GET(request:Request){
       const timeframe=query.get("timeframe") as Timeframe;
       if(!Object.hasOwn(DURATIONS,timeframe))return json({error:"إطار زمني غير صالح."},400);
       const session=activeSession(state);if(!session)return json({state,candles:[],source:null});
+      if(query.has("before")) {
+        if(query.get("sessionId")!==session.id)return json({error:"تغيرت الجلسة؛ تجاهل التاريخ السابق."},409);
+        const before=Number(query.get("before"));
+        if(!Number.isSafeInteger(before)||before<0||before%DURATIONS[timeframe]!==0||before>session.cursorTime+1)
+          return json({error:"حد التاريخ غير صالح."},400);
+        try {return json({sessionId:session.id,...await olderHistory(session,timeframe,before)});}
+        catch(err){return json({error:err instanceof Error?err.message:"تعذر تحميل التاريخ الأقدم."},502);}
+      }
       try { const history=await chartHistory(session,timeframe); return json({state,...history}); }
       catch(err) { return json({state,error:err instanceof Error?err.message:"تعذر تحميل الشموع.",candles:[],source:null},502); }
     }

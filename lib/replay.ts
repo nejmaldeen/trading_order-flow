@@ -45,7 +45,7 @@ export function appendReplayCandle(current: Candle[], minute: Candle, timeframe:
   if (previous && minute.closeTime <= previous.closeTime) return current;
   if (previous?.openTime === start) return [...current.slice(0,-1), { ...previous, closeTime: minute.closeTime,
     high: Math.max(previous.high,minute.high), low: Math.min(previous.low,minute.low), close: minute.close, volume: previous.volume+minute.volume }];
-  return [...current,{...minute,openTime:start}].slice(-320);
+  return [...current,{...minute,openTime:start}];
 }
 export function finishTrade(t: Trade, fill: number, time: number, reason: string) {
   if (t.entryPrice === null || t.quantity === null) return;

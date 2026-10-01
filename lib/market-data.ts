@@ -7,6 +7,8 @@ export class MarketError extends Error {}
 const archiveCache = new Map<string, Candle[]>();
 let restRetryAfter = 0;
 const DAY=86400000;
+export const HISTORY_PAGE_SIZE=500;
+export const HISTORY_START=Date.UTC(2017,7,17);
 export function parseRow(row: (string|number)[]): Candle {
   const ms=(v: string|number) => Math.floor(Number(v)/(Number(v)>1e14?1000:1));
   return {openTime:ms(row[0]),open:Number(row[1]),high:Number(row[2]),low:Number(row[3]),close:Number(row[4]),volume:Number(row[5]),closeTime:ms(row[6])};
@@ -90,7 +92,7 @@ export const marketData: MarketProvider = async (symbol,interval,start,end) => {
 export async function chartHistory(session:Session,timeframe:Timeframe,provider:MarketProvider=marketData) {
   const duration=DURATIONS[timeframe], cutoff=session.cursorTime;
   const bucket=Math.floor((cutoff+1)/duration)*duration;
-  const completed=await provider(session.symbol,timeframe,Math.max(0,bucket-319*duration),bucket-1);
+  const completed=await provider(session.symbol,timeframe,Math.max(HISTORY_START,bucket-(HISTORY_PAGE_SIZE-1)*duration),bucket-1);
   // Strict close-time filtering even if the upstream endTime only filters open times.
   let candles=completed.candles.filter(c=>c.closeTime<=cutoff && c.closeTime<bucket);
   if(candles.some((c,i)=>!validCandle(c,duration)||(i>0&&c.openTime!==candles[i-1].openTime+duration)))
@@ -104,5 +106,21 @@ export async function chartHistory(session:Session,timeframe:Timeframe,provider:
     sources.add(part.source);
   }
   if(!candles.length) throw new MarketError("لا توجد بيانات لهذا التاريخ والأصل.");
-  return {candles:candles.slice(-320),source:[...sources].join(" / ")};
+  return {candles,source:[...sources].join(" / ")};
+}
+
+// Historical pages never change session time or execute trades.
+export async function olderHistory(session:Session,timeframe:Timeframe,before:number,provider:MarketProvider=marketData) {
+  const duration=DURATIONS[timeframe];
+  if(!Number.isSafeInteger(before)||before%duration!==0||before>session.cursorTime+1)
+    throw new MarketError("حد التاريخ غير صالح.");
+  const end=Math.min(before-1,Math.floor((session.cursorTime+1)/duration)*duration-1);
+  const start=Math.max(HISTORY_START,end+1-HISTORY_PAGE_SIZE*duration);
+  if(start>end)return {candles:[],source:"Binance",hasMore:false};
+  const result=await provider(session.symbol,timeframe,start,end);
+  const candles=result.candles.filter(c=>c.openTime>=start&&c.closeTime<=end&&c.closeTime<=session.cursorTime);
+  if(candles.some((c,i)=>!validCandle(c,duration)||(i>0&&c.openTime!==candles[i-1].openTime+duration))||
+    (candles.length>0&&candles.at(-1)!.closeTime!==end))throw new MarketError("توجد فجوة في التاريخ الأقدم؛ أعد المحاولة.");
+  if(!candles.length&&start>HISTORY_START)throw new MarketError("تعذر الحصول على التاريخ الأقدم؛ أعد المحاولة.");
+  return {...result,candles,hasMore:!!candles.length&&candles[0].openTime>HISTORY_START};
 }
