@@ -1,0 +1,18 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {applyCandle,finishTrade,normalizeWorkspace} from '../lib/replay.ts';
+import {cashPreview} from '../lib/order-preview.ts';
+const candle=(open=100,high=101,low=99)=>({openTime:60000,closeTime:119999,open,high,low,close:open,volume:1});
+const trade=(type='market',price=null)=>({id:'t',sessionId:'s',side:'short',status:'pending',orderType:type,orderPrice:price,eligibleTime:60000,notional:100,entryPrice:null,quantity:null,entryFee:0,exitFee:0,stopLoss:110,takeProfit:90,events:[]});
+const run=(t,c)=>{applyCandle({trades:[t]},{id:'s'},c);return t;};
+test('short market enters next minute with adverse slippage and positive original risk',()=>{const t=run(trade(),candle());assert.equal(t.entryPrice,99.98);assert.equal(t.entryFee,.15);assert.ok(t.initialRisk>0);assert.equal(t.status,'open');});
+test('short pending cannot fill a displayed candle',()=>{const t=trade();t.eligibleTime=120000;run(t,candle());assert.equal(t.status,'pending');});
+test('short limit never sells below its limit and receives price improvement on gaps',()=>{const t=run(trade('limit',102),candle(104,105,101));assert.equal(t.entryPrice,104*(1-.0002));const u=run(trade('limit',102),candle(100,103,99));assert.equal(u.entryPrice,102);});
+test('short stop triggers downwards including adverse gap slippage',()=>{const t=run(trade('stop',98),candle(96,97,95));assert.equal(t.entryPrice,96*(1-.0002));assert.equal(t.triggeredAt,60000);});
+test('short target profits and stop takes priority on ambiguous candle',()=>{const t=run(trade(),candle());run(t,candle(99,111,89));assert.equal(t.exitReason,'وقف الخسارة');assert.ok(t.realizedPnl<0);const u=run(trade(),candle());run(u,candle(99,100,89));assert.equal(u.exitPrice,90);assert.ok(u.realizedPnl>0);});
+test('short existing stop gap fills at worse opening plus slippage',()=>{const t=run(trade(),candle());run(t,candle(115,116,114));assert.equal(t.exitPrice,115*(1+.0002));});
+test('intrabar short entry cannot claim earlier target',()=>{const t=trade('limit',102);run(t,candle(100,103,89));assert.equal(t.status,'open');});
+test('intrabar short stop does not exit at pre-entry opening',()=>{const t=trade('stop',98);t.stopLoss=99;run(t,candle(103,104,97));assert.equal(t.exitPrice,99*(1+.0002));});
+test('manual short close buys back next open and keeps R denominator',()=>{const t=run(trade(),candle());const risk=t.initialRisk;t.status='close_pending';t.stopLoss=98;run(t,candle(95,96,94));assert.equal(t.exitPrice,95*(1+.0002));assert.equal(t.initialRisk,risk);assert.equal(t.rMultiple,t.realizedPnl/risk);});
+test('short cash estimate matches net execution with both fees',()=>{const t=run(trade(),candle());const q=cashPreview(t.notional,t.entryPrice,110,90,'market',t.entryPrice,t.quantity,t.entryFee,'short');finishTrade(t,90,120000,'target');assert.ok(Math.abs(q.targetNet-t.realizedPnl)<1e-10);});
+test('legacy trades become long and preserve stored money',()=>{const t=trade();delete t.side;const out=normalizeWorkspace({trades:[t]});assert.equal(out.trades[0].side,'long');assert.equal(out.trades[0].notional,100);});

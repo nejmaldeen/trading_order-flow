@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 const actionSchema=z.discriminatedUnion("action",[
   z.object({action:z.literal("start"),symbol:z.enum(SYMBOLS),startTime:z.number().int().positive(),confirmReplace:z.boolean().default(false)}),
   z.object({action:z.literal("step"),count:z.number().int().min(1).max(64).default(1)}),
-  z.object({action:z.literal("buy"),orderType:z.enum(["market","limit","stop"]).default("market"),orderPrice:z.number().positive().nullable().optional(),notional:z.number().positive().max(100000),stopLoss:z.number().positive(),takeProfit:z.number().positive(),reason:z.string().max(500).default("")}),
+  z.object({action:z.literal("buy"),side:z.enum(["long","short"]).default("long"),orderType:z.enum(["market","limit","stop"]).default("market"),orderPrice:z.number().positive().nullable().optional(),notional:z.number().positive().max(100000),stopLoss:z.number().positive(),takeProfit:z.number().positive(),reason:z.string().max(500).default("")}),
   z.object({action:z.literal("close")}),z.object({action:z.literal("cancel")}),
   z.object({action:z.literal("risk"),tradeId:z.string().uuid(),stopLoss:z.number().positive(),takeProfit:z.number().positive()})
 ]);
@@ -87,13 +87,14 @@ export async function POST(request:Request){
         const current=last.candles.at(-1)?.close;
         if(!current)throw new MarketError("تعذر التحقق من السعر الحالي؛ لم يُرسل الأمر.");
         const level=data.orderType==="market"?current:data.orderPrice;
-        if(!level || data.stopLoss>=level || data.takeProfit<=level)return json({error:"يجب أن يكون الوقف تحت سعر الدخول المتوقع والهدف فوقه."},400);
-        if(data.orderType==="limit" && level>current)return json({error:"سعر الشراء المحدد يجب ألا يتجاوز السعر الحالي."},400);
-        if(data.orderType==="stop" && level<=current)return json({error:"سعر تفعيل وقف الشراء يجب أن يكون فوق السعر الحالي."},400);
+        const sign=data.side==="short"?-1:1;
+        if(!level || sign*(level-data.stopLoss)<=0 || sign*(data.takeProfit-level)<=0)return json({error:"الوقف والهدف لا يناسبان اتجاه الصفقة: الشراء هدفه أعلى، والبيع هدفه أدنى."},400);
+        if(data.orderType==="limit" && sign*(level-current)>0)return json({error:"سعر المحدد: تحت السعر الحالي للشراء، وفوقه للبيع."},400);
+        if(data.orderType==="stop" && sign*(level-current)<=0)return json({error:"سعر التفعيل: فوق السعر الحالي للشراء، وتحته للبيع."},400);
         const equity=INITIAL_BALANCE+state.trades.filter(t=>t.sessionId===session!.id&&t.status==="closed").reduce((s,t)=>s+t.realizedPnl,0);
         if(data.notional*(1+FEE_RATE)>equity)return json({error:"حجم الأمر مع رسوم الدخول يتجاوز الرصيد المتاح."},400);
-        const trade:Trade={id:crypto.randomUUID(),sessionId:session.id,symbol:session.symbol,status:"pending",orderType:data.orderType,orderPrice:data.orderType==="market"?null:level,eligibleTime:session.cursorTime+1,triggeredAt:null,notional:data.notional,quantity:null,entryPrice:null,stopLoss:data.stopLoss,takeProfit:data.takeProfit,initialStop:null,initialTarget:null,exitPrice:null,entryFee:0,exitFee:0,realizedPnl:0,rMultiple:null,initialRisk:null,reason:data.reason,entryTime:null,exitTime:null,exitReason:null,createdAt:new Date().toISOString(),events:[]};
-        event(trade,"created",session.cursorTime,`${data.orderType} · ${level} · وقف ${data.stopLoss} · هدف ${data.takeProfit}`);
+        const trade:Trade={id:crypto.randomUUID(),sessionId:session.id,symbol:session.symbol,status:"pending",side:data.side,referencePrice:level,orderType:data.orderType,orderPrice:data.orderType==="market"?null:level,eligibleTime:session.cursorTime+1,triggeredAt:null,notional:data.notional,quantity:null,entryPrice:null,stopLoss:data.stopLoss,takeProfit:data.takeProfit,initialStop:null,initialTarget:null,exitPrice:null,entryFee:0,exitFee:0,realizedPnl:0,rMultiple:null,initialRisk:null,reason:data.reason,entryTime:null,exitTime:null,exitReason:null,createdAt:new Date().toISOString(),events:[]};
+        event(trade,"created",session.cursorTime,`${data.side} · ${data.orderType} · ${level} · وقف ${data.stopLoss} · هدف ${data.takeProfit}`);
         state.trades.unshift(trade);extra.source=last.source;
       }
       if(data.action==="cancel"||data.action==="close"){
@@ -105,8 +106,9 @@ export async function POST(request:Request){
       if(data.action==="risk"){
         const trade=state.trades.find(t=>t.id===data.tradeId&&t.sessionId===session!.id&&["pending","open"].includes(t.status));
         if(!trade)return json({error:"الأمر أو الصفقة غير موجودة."},404);
-        const entry=trade.entryPrice??trade.orderPrice;
-        if(data.stopLoss>=data.takeProfit || (entry!==null&&data.takeProfit<=entry) || (trade.status==="pending"&&entry!==null&&data.stopLoss>=entry))return json({error:"الوقف يجب أن يكون تحت الهدف، والهدف فوق الدخول؛ وقف الأمر المعلّق تحت سعر دخوله."},400);
+        const entry=trade.entryPrice??trade.orderPrice??trade.referencePrice??null;
+        const sign=trade.side==="short"?-1:1;
+        if(sign*(data.takeProfit-data.stopLoss)<=0 || (entry!==null&&sign*(data.takeProfit-entry)<=0) || (trade.status==="pending"&&entry!==null&&sign*(entry-data.stopLoss)<=0))return json({error:"مستويات الوقف والهدف غير صالحة لاتجاه الصفقة."},400);
         event(trade,"risk",session.cursorTime,`وقف ${trade.stopLoss} ← ${data.stopLoss} · هدف ${trade.takeProfit} ← ${data.takeProfit}`);
         trade.stopLoss=data.stopLoss;trade.takeProfit=data.takeProfit;
       }
