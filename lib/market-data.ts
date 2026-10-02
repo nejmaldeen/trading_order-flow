@@ -53,6 +53,18 @@ export const marketData: MarketProvider = async (symbol,interval,start,end) => {
   const duration=DURATIONS[interval];
   const safeEnd=Math.min(end,Math.floor(Date.now()/duration)*duration-1);
   if(safeEnd<start) return {candles:[],source:"Binance"};
+  // Reuse already verified historical archives before trying the network again.
+  const cached:Candle[]=[];
+  for(let day=Math.floor(start/DAY)*DAY;day<=safeEnd;day+=DAY) {
+    const part=new Date(day).toISOString().slice(0,10);
+    const path=`https://data.binance.vision/data/spot/daily/klines/${symbol}/${interval}/${symbol}-${interval}-${part}.zip`;
+    const rows=archiveCache.get(path);
+    if(!rows){cached.length=0;break;}
+    cached.push(...rows.filter(c=>c.openTime>=start&&c.closeTime<=safeEnd));
+  }
+  if(cached.length && cached[0].openTime===start && cached.at(-1)!.closeTime===safeEnd &&
+    cached.every((c,i)=>i===0||c.openTime===cached[i-1].closeTime+1))
+    return {candles:cached,source:"Binance · الأرشيف الرسمي"};
   let apiError="واجهة البيانات غير متاحة";
   if(Date.now()>=restRetryAfter) {
     try {

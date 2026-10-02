@@ -45,12 +45,19 @@ export function validateMinutes(candles: Candle[], first: number, count: number,
     throw new Error("توجد فجوة أو شمعة غير مكتملة في البيانات؛ لم يتغير وقت المحاكاة.");
 }
 export function appendReplayCandle(current: Candle[], minute: Candle, timeframe: Timeframe) {
+  return appendReplayBatch(current, [minute], timeframe);
+}
+export function appendReplayBatch(current: Candle[], minutes: Candle[], timeframe: Timeframe) {
+  const result = current.slice();
+  for (const minute of minutes) {
   const start = Math.floor(minute.openTime / DURATIONS[timeframe]) * DURATIONS[timeframe];
-  const previous = current.at(-1);
-  if (previous && minute.closeTime <= previous.closeTime) return current;
-  if (previous?.openTime === start) return [...current.slice(0,-1), { ...previous, closeTime: minute.closeTime,
-    high: Math.max(previous.high,minute.high), low: Math.min(previous.low,minute.low), close: minute.close, volume: previous.volume+minute.volume }];
-  return [...current,{...minute,openTime:start}];
+  const previous = result.at(-1);
+  if (previous && minute.closeTime <= previous.closeTime) continue;
+  if (previous?.openTime === start) result[result.length-1] = { ...previous, closeTime: minute.closeTime,
+    high: Math.max(previous.high,minute.high), low: Math.min(previous.low,minute.low), close: minute.close, volume: previous.volume+minute.volume };
+  else result.push({...minute,openTime:start});
+  }
+  return result;
 }
 export function finishTrade(t: Trade, fill: number, time: number, reason: string) {
   if (t.entryPrice === null || t.quantity === null) return;

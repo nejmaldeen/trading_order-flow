@@ -26,11 +26,13 @@ export default function ChartDrawings({chart,series,candles,storageKey,onActive}
   c.subscribeClick(click);return()=>c.unsubscribeClick(click);
  },[mode,chart,series,text,candles.length]);
  useEffect(()=>{
-  let frame=0,last=0;
+  let frame=0,previous="";
   const render=()=>{
-   if(performance.now()-last<80){frame=requestAnimationFrame(render);return;}last=performance.now();
+
    const c=chart.current,s=series.current,root=svg.current;
    if(c&&s&&root){
+    const signature = hidden ? 'hidden' : JSON.stringify([c.timeScale().width(),data.current.length,data.current[0]?.openTime,shapes.map(q=>[c.timeScale().timeToCoordinate(q.a.time/1000 as UTCTimestamp),c.timeScale().timeToCoordinate(q.b.time/1000 as UTCTimestamp),s.priceToCoordinate(q.a.price),s.priceToCoordinate(q.b.price)])]);
+    if(signature===previous){frame=requestAnimationFrame(render);return;} previous=signature;
     const times=data.current.map(b=>b.openTime);
     const x=(time:number)=>{const exact=times.indexOf(time);let idx=exact;if(idx<0){idx=times.findIndex(t=>t>time)-1;if(idx===-2)idx=times.length-1;}return idx<0?null:c.timeScale().logicalToCoordinate(idx as never);};
     root.replaceChildren();

@@ -48,7 +48,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { blank, appendReplayCandle, type SymbolName, type Timeframe, type Candle, type Session, type Trade, type Workspace, type OrderType } from "@/lib/replay";
+import { blank, appendReplayBatch, type SymbolName, type Timeframe, type Candle, type Session, type Trade, type Workspace, type OrderType } from "@/lib/replay";
 import FloatingReplay from "@/components/floating-replay";
 import ChartDrawings from "@/components/chart-drawings";
 import StopLevelEditor from "@/components/stop-level-editor";
@@ -134,6 +134,7 @@ export default function TradingLab() {
   const olderLoadRef = useRef<() => void>(()=>{});
   const candlesRef = useRef<Candle[]>([]);
   const renderedFirst = useRef<number | null>(null);
+  const renderedCandles = useRef<Candle[]>([]);
   const [floatingReplay,setFloatingReplay]=useState(true);
   const [selectReplayPoint,setSelectReplayPoint]=useState(false);
   const [playing, setPlaying] = useState(false);
@@ -334,10 +335,7 @@ export default function TradingLab() {
 
       if (body.action === "step" && payload.candles?.length) {
         setDataReady(true);
-        setCandles((current) => payload.candles!.reduce(
-          (visible, candle) => appendReplayCandle(visible, candle, timeframe),
-          current,
-        ));
+        setCandles((current) => appendReplayBatch(current, payload.candles!, timeframe));
       }
       return true;
     } catch (err) {
@@ -464,14 +462,22 @@ export default function TradingLab() {
     const previousFirst=renderedFirst.current;
     const inserted=previousFirst===null?0:candles.findIndex(c=>c.openTime===previousFirst);
     const visibleRange=!followChart.current&&inserted>0?chartRef.current.timeScale().getVisibleLogicalRange():null;
-    candleSeries.current.setData(chartData);
+    const prior = renderedCandles.current;
+    const incremental = prior.length > 0 && candles.length >= prior.length &&
+      prior[0] === candles[0] && (prior.length < 2 || prior[prior.length-2] === candles[prior.length-2]);
+    if (incremental) {
+      for (const bar of chartData.slice(prior.length-1)) candleSeries.current.update(bar);
+    } else candleSeries.current.setData(chartData);
+    renderedCandles.current = candles;
     renderedFirst.current=candles[0]?.openTime??null;
     if(visibleRange)chartRef.current.timeScale().setVisibleLogicalRange({from:visibleRange.from+inserted,to:visibleRange.to+inserted});
-    volumeSeries.current?.setData(candles.map((candle) => ({
+    const volumeData = candles.map((candle) => ({
       time: (candle.openTime / 1000) as UTCTimestamp,
       value: candle.volume,
       color: candle.close >= candle.open ? "#12b88655" : "#f05b6855",
-    })));
+    }));
+    if(incremental) { for(const bar of volumeData.slice(prior.length-1)) volumeSeries.current?.update(bar); }
+    else volumeSeries.current?.setData(volumeData);
     vwapSeries.current?.setData(showVwap ? longAvg : []);
     volumeSeries.current?.applyOptions({ visible: showVolume });
     const trade = workspace.trades.find((item) => item.sessionId === session?.id && ["open", "close_pending"].includes(item.status));

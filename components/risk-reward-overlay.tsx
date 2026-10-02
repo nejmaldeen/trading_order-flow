@@ -8,7 +8,7 @@ type Props={chart:RefObject<IChartApi|null>;series:RefObject<ISeriesApi<'Candles
 export default function RiskRewardOverlay(p:Props){
  const root=useRef<HTMLDivElement>(null),gain=useRef<HTMLDivElement>(null),loss=useRef<HTMLDivElement>(null),entryLabel=useRef<HTMLButtonElement>(null);
  useEffect(()=>{
-  let frame=0;
+  let frame=0,previous="";
   const render=()=>{
    const chart=p.chart.current,series=p.series.current,host=root.current;
    if(chart&&series&&host&&gain.current&&loss.current&&entryLabel.current){
@@ -17,6 +17,8 @@ export default function RiskRewardOverlay(p:Props){
     const x=chart.timeScale().timeToCoordinate((p.time/1000) as UTCTimestamp),y=series.priceToCoordinate(entry);
     const sy=stop?series.priceToCoordinate(stop):null,ty=target?series.priceToCoordinate(target):null;
     const right=chart.timeScale().width();
+    const signature=JSON.stringify([x,y,sy,ty,right,stop,target,entry,!!p.levels.current.entry]);
+    if(signature===previous){frame=requestAnimationFrame(render);return;} previous=signature;
     host.style.display=x===null||y===null||sy===null||ty===null||x>right||x+260<0?'none':'block';
     if(x!==null&&y!==null&&sy!==null&&ty!==null&&stop&&target){
      const left=Math.max(0,x),width=Math.max(0,Math.min(260,right-left-8));
