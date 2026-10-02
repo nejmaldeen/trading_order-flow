@@ -472,3 +472,44 @@ th:first-child, td:first-child { padding-right: 16px; } th:last-child, td:last-c
 .floating-replay select { width:58px; background:#344149; color:#e5e9eb; border:1px solid #52616a; border-radius:5px; padding:6px 3px; font-size:13px; }
 .floating-replay time { font-size:11px; color:#abbcc5; padding:0 7px; direction:rtl; white-space:nowrap; }
 @media(max-width:1100px) { .floating-replay time { display:none; } }
+/* Focused workspace: chart first, secondary controls on demand. */
+.simple-layout .topbar { height:56px; background:#14171c; border-color:#2a3038; }
+.simple-layout .workspace-grid { grid-template-columns:34px minmax(0,1fr) 6px var(--order-width); }
+.simple-layout.orders-collapsed .workspace-grid { grid-template-columns:34px minmax(0,1fr); }
+.simple-layout .toolrail { background:#14171c; padding-top:12px; }
+.simple-layout .toolrail button { width:28px; height:32px; }
+.simple-layout .chart-toolbar { padding:8px 16px; min-height:48px; }
+.simple-layout .symbol-meta { display:none; }
+.simple-layout .periods { width:100%; gap:6px; }
+.simple-layout .periods button { min-height:34px; border-radius:7px; }
+.simple-layout .chart-navigation { padding:3px 16px; justify-content:space-between; overflow:visible; position:relative; z-index:10; }
+.chart-options summary { cursor:pointer; padding:6px 10px; font-size:12px; color:#bac6d2; }
+.chart-options-popover { position:absolute; top:100%; right:12px; width:230px; display:flex; flex-direction:column; gap:6px; padding:12px; background:#1b2028; border:1px solid #39424e; border-radius:10px; box-shadow:0 12px 35px #0006; }
+.chart-options-popover button { text-align:right; min-height:34px!important; }
+.simple-layout .ohlc-strip { color:#84909d; height:26px; border-bottom:0; padding:0 16px; }
+.simple-layout .chart-caption { display:none; }
+.simple-layout .chart-footer { height:23px; min-height:23px; font-size:10px; }
+.simple-layout .chart-footer .timezone { display:none; }
+.simple-layout .replay-panel { padding:10px 16px; background:#14171c; border-color:#2a3038; }
+.simple-layout .replay-title strong { display:none; }
+.simple-layout .replay-title { margin-bottom:7px; }
+.simple-layout .replay-controls { gap:8px; align-items:center; flex-wrap:wrap; }
+.simple-layout .replay-controls button,.simple-layout .replay-controls select { min-height:38px; border-radius:7px; }
+.simple-layout .play-button { background:#275f56; border-color:#367c6e; }
+.simple-layout .replay-ticket { gap:7px; }
+.simple-layout .replay-ticket label { font-size:12px; }
+.simple-layout .replay-ticket input { height:38px; width:82px; }
+.simple-layout .replay-session { display:inline-block; margin-inline-end:20px; }
+.replay-guide { display:inline-block; font-size:11px; color:#8593a3; vertical-align:top; margin-top:6px; }
+.replay-guide summary { cursor:pointer; padding:3px; }
+.simple-layout .seek-chart { border:1px solid #39434e; background:#1b232c; color:#bac9d8; padding:6px 10px; cursor:pointer; }
+.simple-layout .seek-chart[aria-pressed=true] { color:#6fe0c8; border-color:#6fe0c8; }
+.simple-layout.floating-controls .replay-controls > .play-button,.simple-layout.floating-controls .replay-controls > .step-button,.simple-layout.floating-controls .replay-controls > label,.simple-layout.floating-controls .seek-chart { display:none; }
+.simple-layout .right-panel { background:#14171c; }
+@media(max-width:800px){
+ .simple-layout .workspace-grid,.simple-layout.orders-collapsed .workspace-grid { grid-template-columns:30px minmax(0,1fr); }
+ .simple-layout .chart-toolbar { flex-direction:row; }
+ .simple-layout .replay-ticket { margin-inline-start:0; width:100%; }
+ .simple-layout .ohlc-strip { overflow:hidden; }
+ .simple-layout .replay-panel { padding:8px; }
+}
