@@ -1,3 +1,4 @@
+import {validateStopLevels} from "@/lib/stop-levels";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { z } from "zod";
@@ -10,7 +11,8 @@ export const dynamic = "force-dynamic";
 const actionSchema=z.discriminatedUnion("action",[
   z.object({action:z.literal("start"),symbol:z.enum(SYMBOLS),startTime:z.number().int().positive(),confirmReplace:z.boolean().default(false)}),
   z.object({action:z.literal("step"),count:z.number().int().min(1).max(64).default(1)}),
-  z.object({action:z.literal("buy"),side:z.enum(["long","short"]).default("long"),orderType:z.enum(["market","limit","stop"]).default("market"),orderPrice:z.number().positive().nullable().optional(),notional:z.number().positive().max(100000),stopLoss:z.number().positive(),takeProfit:z.number().positive(),reason:z.string().max(500).default("")}),
+  z.object({action:z.literal("buy"),side:z.enum(["long","short"]).default("long"),orderType:z.enum(["market","limit","stop"]).default("market"),orderPrice:z.number().positive().nullable().optional(),notional:z.number().positive().max(100000),stopLoss:z.number().positive(),takeProfit:z.number().positive(),previewOriginal:z.object({entry:z.number().positive(),stop:z.number().positive(),target:z.number().positive()}).nullish(),reason:z.string().max(500).default("")}),
+  z.object({action:z.literal("stops"),tradeId:z.string().uuid(),levels:z.array(z.object({price:z.number().positive(),amount:z.number().positive()})).max(5)}),
   z.object({action:z.literal("close")}),z.object({action:z.literal("cancel")}),
   z.object({action:z.literal("risk"),tradeId:z.string().uuid(),stopLoss:z.number().positive(),takeProfit:z.number().positive()})
 ]);
@@ -95,6 +97,7 @@ export async function POST(request:Request){
         if(data.notional*(1+FEE_RATE)>equity)return json({error:"حجم الأمر مع رسوم الدخول يتجاوز الرصيد المتاح."},400);
         const trade:Trade={id:crypto.randomUUID(),sessionId:session.id,symbol:session.symbol,status:"pending",side:data.side,referencePrice:level,orderType:data.orderType,orderPrice:data.orderType==="market"?null:level,eligibleTime:session.cursorTime+1,triggeredAt:null,notional:data.notional,quantity:null,entryPrice:null,stopLoss:data.stopLoss,takeProfit:data.takeProfit,initialStop:null,initialTarget:null,exitPrice:null,entryFee:0,exitFee:0,realizedPnl:0,rMultiple:null,initialRisk:null,reason:data.reason,entryTime:null,exitTime:null,exitReason:null,createdAt:new Date().toISOString(),events:[]};
         event(trade,"created",session.cursorTime,`${data.side} · ${data.orderType} · ${level} · وقف ${data.stopLoss} · هدف ${data.takeProfit}`);
+        if(data.previewOriginal) event(trade,"preview",session.cursorTime,`معاينة أولية: دخول ${data.previewOriginal.entry} · وقف ${data.previewOriginal.stop} · هدف ${data.previewOriginal.target}؛ تأكيد: دخول ${level} · وقف ${data.stopLoss} · هدف ${data.takeProfit}`);
         state.trades.unshift(trade);extra.source=last.source;
       }
       if(data.action==="cancel"||data.action==="close"){
@@ -102,6 +105,17 @@ export async function POST(request:Request){
         if(!trade)return json({error:"لا توجد صفقة أو أمر مطابق لهذا الإجراء."},409);
         trade.status=data.action==="cancel"?"cancelled":"close_pending";
         event(trade,trade.status,session.cursorTime,data.action==="cancel"?"إلغاء الأمر":"طلب إغلاق عند الافتتاح التالي");
+      }
+      if(data.action==="stops"){
+        const trade=state.trades.find(t=>t.id===data.tradeId&&t.sessionId===session!.id);
+        if(!trade)return json({error:"الصفقة غير موجودة."},404);
+        const last=await marketData(session.symbol,"1m",session.cursorTime-59999,session.cursorTime);
+        const current=last.candles.at(-1)?.close;
+        if(!current)throw new MarketError("تعذر التحقق من السعر الحالي.");
+        const issue=validateStopLevels(trade,data.levels,current);
+        if(issue)return json({error:issue},400);
+        event(trade,"stop-levels",session.cursorTime,`تعديل الوقف الجزئي: ${JSON.stringify(trade.stopLevels??[])} ← ${JSON.stringify(data.levels)}`);
+        trade.stopLevels=[...(trade.stopLevels??[]).filter(x=>x.filled),...data.levels.map(x=>({...x,id:crypto.randomUUID(),eligibleTime:session!.cursorTime+1,filled:false}))];
       }
       if(data.action==="risk"){
         const trade=state.trades.find(t=>t.id===data.tradeId&&t.sessionId===session!.id&&["pending","open"].includes(t.status));
@@ -111,6 +125,8 @@ export async function POST(request:Request){
         if(sign*(data.takeProfit-data.stopLoss)<=0 || (entry!==null&&sign*(data.takeProfit-entry)<=0) || (trade.status==="pending"&&entry!==null&&sign*(entry-data.stopLoss)<=0))return json({error:"مستويات الوقف والهدف غير صالحة لاتجاه الصفقة."},400);
         event(trade,"risk",session.cursorTime,`وقف ${trade.stopLoss} ← ${data.stopLoss} · هدف ${trade.takeProfit} ← ${data.takeProfit}`);
         trade.stopLoss=data.stopLoss;trade.takeProfit=data.takeProfit;
+        const superseded=(trade.stopLevels??[]).filter(x=>!x.filled&&sign*(x.price-data.stopLoss)<=0);
+        if(superseded.length){event(trade,"stop-levels-superseded",session.cursorTime,"ألغى الوقف النهائي الأشد حماية المستويات: "+superseded.map(x=>x.price).join(", "));trade.stopLevels=trade.stopLevels?.filter(x=>x.filled||sign*(x.price-data.stopLoss)>0);}
       }
     }
     if(!await saveWorkspace(id,state,previous))return json({error:"حُفظ إجراء آخر بالتزامن. أعد تحميل الجلسة.",conflict:true},409);

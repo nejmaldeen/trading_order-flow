@@ -11,6 +11,9 @@ export type Candle = { openTime: number; closeTime: number; open: number; high: 
 export type Session = { id: string; symbol: SymbolName; startTime: number; cursorTime: number; advancedBars: number; createdAt: string };
 export type TradeEvent = { kind: string; time: number; detail: string };
 export type Trade = {
+  remainingQuantity?: number;
+  stopLevels?: {id:string;price:number;amount:number;eligibleTime:number;filled:boolean}[];
+  partialExits?: {price:number;quantity:number;fee:number;pnl:number;time:number}[];
   id: string; sessionId: string; symbol: SymbolName;
   status: "pending" | "open" | "close_pending" | "closed" | "cancelled";
   side?: TradeSide; referencePrice?: number | null;
@@ -51,8 +54,13 @@ export function appendReplayCandle(current: Candle[], minute: Candle, timeframe:
 }
 export function finishTrade(t: Trade, fill: number, time: number, reason: string) {
   if (t.entryPrice === null || t.quantity === null) return;
-  t.exitPrice=fill; t.exitTime=time; t.exitFee=fill*t.quantity*FEE_RATE;
-  t.realizedPnl=(t.side==="short"?-1:1)*(fill-t.entryPrice)*t.quantity-t.entryFee-t.exitFee;
+  const remaining=t.remainingQuantity??t.quantity;
+  const previous=t.partialExits??[];
+  const fee=fill*remaining*FEE_RATE;
+  t.exitPrice=(previous.reduce((sum,x)=>sum+x.price*x.quantity,0)+fill*remaining)/t.quantity;
+  t.exitTime=time; t.exitFee=previous.reduce((sum,x)=>sum+x.fee,0)+fee;
+  t.realizedPnl=previous.reduce((sum,x)=>sum+x.pnl,0)+(t.side==="short"?-1:1)*(fill-t.entryPrice)*remaining-t.entryFee*remaining/t.quantity-fee;
+  t.remainingQuantity=0;
   t.rMultiple=t.initialRisk && t.initialRisk>0 ? t.realizedPnl/t.initialRisk : null;
   t.status="closed"; t.exitReason=reason; event(t,"closed",time,`${reason}: ${fill}`);
 }
@@ -85,10 +93,28 @@ export function applyCandle(state: Workspace, session: Session, c: Candle) {
     }
     if (t.status === "close_pending") { finishTrade(t,c.open*(1-sign*SLIPPAGE),c.openTime,"إغلاق يدوي"); continue; }
     if (t.status !== "open") continue;
+    let partialStopHit=false;
+    const levels=(t.stopLevels??[]).filter(x=>!x.filled&&x.eligibleTime<=c.openTime&&sign*(x.price-t.stopLoss)>0)
+      .sort((a,b)=>sign*(b.price-a.price));
+    for(const level of levels) {
+      if(!(short?c.high>=level.price:c.low<=level.price))continue;
+      const remaining=t.remainingQuantity??t.quantity!;
+      const quantity=Math.min(remaining,level.amount/t.entryPrice!);
+      const fill=(intrabarEntry?level.price:short?Math.max(c.open,level.price):Math.min(c.open,level.price))*(1-sign*SLIPPAGE);
+      level.filled=true;partialStopHit=true;
+      if(quantity>=remaining-1e-12) {finishTrade(t,fill,c.closeTime,"الوقف الجزئي الأخير");break;}
+      const fee=fill*quantity*FEE_RATE;
+      const pnl=sign*(fill-t.entryPrice!)*quantity-t.entryFee*quantity/t.quantity!-fee;
+      (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,time:c.closeTime});
+      t.remainingQuantity=remaining-quantity;t.exitFee=(t.exitFee??0)+fee;
+      t.realizedPnl=(t.realizedPnl??0)+pnl;
+      event(t,"partial-stop",c.closeTime,`وقف جزئي ${level.price} · تنفيذ ${fill} · كمية ${quantity} · صافي ${pnl}`);
+    }
+    if(t.status!=="open")continue;
     if (short?c.high>=t.stopLoss:c.low<=t.stopLoss) {
       // For an intrabar entry, the candle open preceded the fill and cannot be an exit fill.
       finishTrade(t,(intrabarEntry ? t.stopLoss : short?Math.max(c.open,t.stopLoss):Math.min(c.open,t.stopLoss))*(1-sign*SLIPPAGE),c.closeTime,"وقف الخسارة");
-    } else if (!intrabarEntry && (short?c.low<=t.takeProfit:c.high>=t.takeProfit)) {
+    } else if (!partialStopHit && !intrabarEntry && (short?c.low<=t.takeProfit:c.high>=t.takeProfit)) {
       finishTrade(t,t.takeProfit,c.closeTime,"جني الأرباح");
     }
     // Unknown intrabar ordering: stop-first; never credit an entry-bar target for an intrabar fill.
