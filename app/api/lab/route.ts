@@ -10,7 +10,7 @@ import { chartHistory, olderHistory, marketData, MarketError } from "@/lib/marke
 export const dynamic = "force-dynamic";
 const actionSchema=z.discriminatedUnion("action",[
   z.object({action:z.literal("start"),symbol:z.enum(SYMBOLS),startTime:z.number().int().positive(),confirmReplace:z.boolean().default(false)}),
-  z.object({action:z.literal("step"),count:z.number().int().min(1).max(64).default(1)}),
+  z.object({action:z.literal("step"),unit:z.enum(["minute","bar"]).default("minute"),count:z.number().int().min(1).max(64).default(1)}),
   z.object({action:z.literal("buy"),side:z.enum(["long","short"]).default("long"),orderType:z.enum(["market","limit","stop"]).default("market"),orderPrice:z.number().positive().nullable().optional(),notional:z.number().positive().max(100000),stopLoss:z.number().positive(),takeProfit:z.number().positive(),previewOriginal:z.object({entry:z.number().positive(),stop:z.number().positive(),target:z.number().positive()}).nullish(),reason:z.string().max(500).default("")}),
   z.object({action:z.literal("stops"),tradeId:z.string().uuid(),levels:z.array(z.object({price:z.number().positive(),amount:z.number().positive()})).max(5)}),
   z.object({action:z.literal("close")}),z.object({action:z.literal("cancel")}),
@@ -79,7 +79,8 @@ export async function POST(request:Request){
       if(data.action==="step"){
         const first=session.cursorTime+1,latest=Math.floor(Date.now()/60000)*60000-60000;
         if(first>latest)return json({error:"وصلت إلى آخر شمعة مكتملة متاحة."},409);
-        const count=Math.min(data.count,Math.floor((latest-first)/60000)+1);
+        const requested=data.unit==="bar"?DURATIONS[body.timeframe??"15m"]/60000:data.count;
+        const count=Math.min(requested,Math.floor((latest-first)/60000)+1);
         const result=await marketData(session.symbol,"1m",first,first+count*60000-1);
         advance(state,result.candles,count);extra=result;
       }

@@ -1,7 +1,7 @@
 "use client";
 import {useEffect,useRef,useState} from 'react';
 import {GripVertical,Pause,Play,SkipForward,X,LocateFixed} from 'lucide-react';
-type Props={playing:boolean;disabled:boolean;speed:number;time:string;onToggle:()=>void;onStep:()=>void;onSpeed:(n:number)=>void;onClose:()=>void;onLatest:()=>void};
+type Props={playing:boolean;disabled:boolean;speed:number;time:string;selecting:boolean;onToggle:()=>void;onStep:()=>void;onSpeed:(n:number)=>void;onClose:()=>void;onLatest:()=>void;onSelect:()=>void};
 export default function FloatingReplay(p:Props){
  const root=useRef<HTMLDivElement>(null),drag=useRef<{id:number;x:number;y:number;left:number;top:number}|null>(null);
  const [pos,setPos]=useState({x:20,y:60});
@@ -13,7 +13,8 @@ export default function FloatingReplay(p:Props){
  <button onClick={p.onClose} title="إخفاء الشريط" aria-label="إخفاء شريط Replay"><X size={17}/></button>
  <span className="floating-divider"/>
  <button className={p.playing?'is-playing':''} disabled={!p.playing&&p.disabled} onClick={p.onToggle} title={p.playing?'إيقاف مؤقت':'تشغيل'} aria-label={p.playing?'إيقاف Replay العائم':'تشغيل Replay العائم'}>{p.playing?<Pause size={19}/>:<Play size={19}/>}</button>
- <button disabled={p.disabled} onClick={p.onStep} title="تقدم دقيقة واحدة" aria-label="تقدم دقيقة من الشريط العائم"><SkipForward size={19}/></button>
+ <button className={p.selecting?'is-playing':''} disabled={p.disabled} onClick={p.onSelect} title="اختر شمعة للعودة إليها" aria-label="اختيار نقطة Replay من الشارت"><LocateFixed size={19}/></button>
+ <button disabled={p.disabled} onClick={p.onStep} title="الشمعة التالية حسب الفريم المختار" aria-label="الشمعة التالية من الشريط العائم"><SkipForward size={19}/></button>
  <select value={p.speed} aria-label="سرعة Replay العائم" onChange={e=>p.onSpeed(Number(e.target.value))}>{[1,2,4,8,16,32,64].map(n=><option key={n} value={n}>{n}×</option>)}</select>
  <button onClick={p.onLatest} title="العودة إلى آخر شمعة" aria-label="آخر شمعة من الشريط العائم"><LocateFixed size={19}/></button>
  <time title="وقت المحاكاة الحالي">{p.time}</time>

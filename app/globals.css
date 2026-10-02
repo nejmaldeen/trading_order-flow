@@ -64,7 +64,8 @@ button { color: inherit; }
 .vwap-key { display: inline-flex; align-items: center; gap: 5px; color: #bdab7a; font-size: 9px; }
 .vwap-key i { display: inline-block; width: 11px; height: 2px; background: #eab85b; }
 .chart-host { position: relative; flex: 1; min-height: 260px; cursor: crosshair; }
-.chart-host.drawing-mode { cursor: crosshair; }
+.chart-host.drawing-mode, .chart-host.select-replay-mode { cursor: crosshair; }
+.chart-host.select-replay-mode { outline: 2px solid #4ac7b0; outline-offset: -2px; }
 .chart-host.risk-dragging { cursor: ns-resize; touch-action: none; }
 .chart-empty { position: absolute; z-index: 2; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 9px; background: #0c1117e8; text-align: center; }
 .empty-icon { display: grid; place-items: center; width: 42px; height: 42px; margin-bottom: 4px; border: 1px solid #2d4055; border-radius: 12px; color: #82b2ed; background: #162334; }
