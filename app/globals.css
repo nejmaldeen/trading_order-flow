@@ -462,3 +462,12 @@ th:first-child, td:first-child { padding-right: 16px; } th:last-child, td:last-c
 .market-card { display:none; }
 .zone-entry { position:absolute; transform:translateY(-50%); border-top:1px dashed #d6d2dd; background:#17171cd9; color:#eee; padding:3px 6px; font-size:12px; line-height:1.5; }
 @media(max-width:800px) { .replay-ticket { width:100%; margin:0; }.replay-title strong { display:none; }.cursor-time { width:auto; margin-inline-start:auto; }.indicator-dialog { padding:16px; }.indicator-browser { grid-template-columns:1fr; gap:8px; }.indicator-browser nav { flex-direction:row; flex-wrap:wrap; }.indicator-browser nav p { display:none; }.topbar { gap:7px; } }
+
+.floating-replay { position:absolute; z-index:8; display:flex; align-items:center; gap:3px; direction:ltr; padding:5px; max-width:100%; box-sizing:border-box; background:#263138f2; border:1px solid #46535c; border-radius:9px; box-shadow:0 6px 22px #0006; }
+.floating-replay button { width:34px; height:34px; display:grid; place-items:center; flex-shrink:0; border:0; border-radius:5px; color:#c7d0d5; background:transparent; cursor:pointer; }
+.floating-replay button:hover { background:#3b4850; color:white; }.floating-replay button:disabled { opacity:.35; cursor:default; }.floating-replay .is-playing { background:#31564d; color:#64e2bf; }
+.floating-replay .floating-grip { width:24px; cursor:grab; touch-action:none; }.floating-replay .floating-grip:active { cursor:grabbing; }
+.floating-divider { width:1px; height:23px; background:#536169; margin:0 3px; }
+.floating-replay select { width:58px; background:#344149; color:#e5e9eb; border:1px solid #52616a; border-radius:5px; padding:6px 3px; font-size:13px; }
+.floating-replay time { font-size:11px; color:#abbcc5; padding:0 7px; direction:rtl; white-space:nowrap; }
+@media(max-width:1100px) { .floating-replay time { display:none; } }
