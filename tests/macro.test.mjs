@@ -19,5 +19,8 @@ test('large replay jumps retain every released event with original values',()=>{
  const data=macroAt(Date.parse('2026-01-29T00:00:00Z'));
  assert.equal(data.events.filter(e=>e.status==='released').length,3);
  assert.match(data.events[1].summary,/2.7%/);
- assert.match(data.coverage,/فقط/);
+ assert.match(data.coverage,/محدودة/);
+});
+test('January releases are never presented as August news',()=>{
+ assert.equal(macroAt(Date.parse('2026-08-20')).events.length,0);
 });

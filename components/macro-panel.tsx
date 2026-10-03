@@ -1,41 +1,46 @@
 "use client";
-import {useEffect,useState} from "react";
-import type {MacroSnapshot} from "@/lib/macro";
-export default function MacroPanel({data,cursor,inspectRequest=0}:{data:MacroSnapshot|null;cursor:number;inspectRequest?:number}){
- const [open,setOpen]=useState(false);
- const [inspection,setInspection]=useState<number|null>(null);
- const [hours,setHours]=useState(6);
- useEffect(()=>{if(inspectRequest){setInspection(cursor);setOpen(true);}},[inspectRequest]);
- const inspecting=inspection===cursor;
-
- if(!data||data.cursor!==cursor)return null;
- const next=data.events.find(e=>e.status==='upcoming');
- const released=data.events.filter(e=>e.status==='released');
- const last=released.at(-1);
- const minutes=next?Math.ceil((next.time-cursor)/60000):null;
- const nearby=minutes!==null&&minutes<=60;
- const fresh=last&&cursor-last.time<3600000;
- const format=(time:number)=>new Intl.DateTimeFormat('ar-SA',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Riyadh'}).format(time);
+import {useEffect,useState} from 'react';
+import type {MacroSnapshot} from '@/lib/macro';
+import type {NewsRecord,NewsCoverage} from '@/lib/news-archive';
+type Result={cursor:number;sessionId:string;hours:number;events:NewsRecord[];coverage:NewsCoverage[]};
+const names:Record<string,string>={cpi:'التضخم CPI',empsit:'الوظائف',fed:'الفيدرالي'};
+export default function MacroPanel({data,cursor,sessionId,inspectRequest=0,onEvents}:{data:MacroSnapshot|null;cursor:number;sessionId?:string;inspectRequest?:number;onEvents:(events:NewsRecord[])=>void}){
+ const [open,setOpen]=useState(false),[hours,setHours]=useState(24),[retry,setRetry]=useState(0);
+ const [result,setResult]=useState<Result|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ const hourBucket=Math.floor(cursor/3600000);
+ useEffect(()=>{if(inspectRequest)setOpen(true);},[inspectRequest]);
+ useEffect(()=>{
+  if(!sessionId||!cursor)return;
+  const abort=new AbortController();setBusy(true);setError('');setResult(null);onEvents([]);
+  fetch(`/api/news?cursor=${cursor}&hours=${hours}&sessionId=${encodeURIComponent(sessionId)}`,{signal:abort.signal})
+   .then(async response=>{const body=await response.json() as Result&{error?:string};if(!response.ok)throw new Error(body.error||'تعذر الفحص');return body;})
+   .then(body=>{if(!abort.signal.aborted){setResult(body);onEvents(body.events);}})
+   .catch(e=>{if(!abort.signal.aborted)setError(e instanceof Error?e.message:'تعذر الفحص');})
+   .finally(()=>{if(!abort.signal.aborted)setBusy(false);});
+  return()=>abort.abort();
+  // At most one background refresh per simulation hour; no requests per candle tick.
+ },[hourBucket,open,hours,retry,inspectRequest,sessionId,onEvents]);
+ const stale=!!result&&result.cursor!==cursor;
+ const next=data?.cursor===cursor?data.events.find(e=>e.status==='upcoming'):undefined;
+ const format=(t:number)=>new Intl.DateTimeFormat('ar-SA',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Riyadh'}).format(t);
  return <div className="macro-panel">
-  <button className={`macro-toggle ${nearby||fresh?'macro-alert':''}`} aria-expanded={open} onClick={()=>setOpen(!open)}><span>◉ الاقتصاد والأخبار</span><span role="status">{nearby?`${next!.title} بعد ${minutes} د`:fresh?`صدر: ${last.title}`:'BTC · ETH'} <small>{open?'إغلاق':'التفاصيل'}</small></span></button>
-  {open&&<section className="macro-details" aria-label="سياق الاقتصاد الكلي">
-   {inspection!==null&&<div className="news-inspection">
-    <header><strong>فحص أخبار الحركة</strong><button onClick={()=>setOpen(false)} aria-label="إغلاق فحص الأخبار">×</button></header>
-    <p>وقت الفحص: {format(inspection)} · الرياض</p>
-    {!inspecting?<><p role="status">تغير وقت المحاكاة؛ هذه النتيجة لم تعد تخص اللحظة الحالية.</p><button onClick={()=>setInspection(cursor)}>إعادة الفحص الآن</button></>:<>
-     <label>ابحث قبل هذه اللحظة <select value={hours} onChange={e=>setHours(Number(e.target.value))}><option value={1}>ساعة</option><option value={6}>6 ساعات</option><option value={24}>24 ساعة</option></select></label>
-     <p role="status">{released.some(e=>cursor-e.time<=hours*3600000)?'وُجد إصدار قريب زمنيًا؛ التزامن وحده لا يثبت سبب الحركة.':'لا توجد نتيجة ضمن السجل المحدود؛ لا يعني ذلك أن الحركة بلا خبر.'}</p>
-     {released.filter(e=>cursor-e.time<=hours*3600000).reverse().map(e=><article key={e.id}><b>{e.title}</b><p>صدر قبل {Math.floor((cursor-e.time)/60000)} دقيقة · {format(e.time)}</p><p>{e.summary}</p><a href={e.source} target="_blank" rel="noreferrer">تحقق من المصدر ↗</a></article>)}
-     {nearby&&<p className="macro-coverage">حدث قادم: {next!.title} بعد {minutes} دقيقة. لا يمكن نسب الحركة الحالية إلى نتيجة لم تصدر بعد.</p>}
-     <p>للقرار: تحقق من شروط استراتيجيتك والسيولة وVWAP؛ هذه النتائج ليست تأكيدًا للدخول أو الخروج.</p>
-     <small>بحث في الإصدارات الموثقة داخل المختبر، وليس بحثًا شاملًا في الإنترنت.</small>
-    </>}
-   </div>}
-   <p className="macro-coverage">{data.coverage}</p>
-   <div className="macro-answers"><div><small>البيئة العامة</small><strong>غير محسومة</strong><p>لا تكفي هذه الإصدارات وحدها للحكم على اتجاه BTC أو ETH.</p></div><div><small>خطر الحدث</small><strong>{nearby?'حدث قريب · راقب التذبذب':fresh?'خبر حديث · راقب التذبذب':'راجع التقويم المتاح'}</strong><p>غياب تنبيه لا يعني غياب الأخبار أو المخاطر.</p></div><div><small>التوافق مع استراتيجيتك</small><strong>يحتاج تحققًا</strong><p>راجع شروط السيولة وVWAP بعد استقرار الحركة؛ قواعد الاستراتيجية غير مربوطة بعد.</p></div></div>
-   {next&&<article><header><b>القادم · {next.title}</b><time>{format(next.time)} · الرياض</time></header><p>موعد معلن وقت المحاكاة. النتيجة مخفية حتى صدورها.</p><a href={next.source} target="_blank" rel="noreferrer">مصدر إعلان الموعد ↗</a></article>}
-   {[...released].reverse().map(e=><article key={e.id}><header><b>صدر · {e.title}</b><time>{format(e.time)} · الرياض</time></header><p>{e.summary}</p><p>قراءة تدريبية: قد يعيد الإصدار تسعير توقعات الفائدة والمخاطرة. لا توجد توقعات سوق تاريخية موثقة هنا لتحديد المفاجأة أو استنتاج اتجاه السعر.</p><a href={e.source} target="_blank" rel="noreferrer">الإصدار الرسمي ↗</a></article>)}
-   {!data.events.length&&<p>لا تتوفر أحداث موثقة لهذه اللحظة في التغطية الحالية.</p>}
+  <button className="macro-toggle" aria-expanded={open} onClick={()=>setOpen(!open)}><span>◉ الاقتصاد والأخبار</span><span>{next?`${next.title} · ${format(next.time)}`:'BTC · ETH'} · {open?'إغلاق':'فحص الفترة'}</span></button>
+  {open&&<section className="macro-details" aria-label="أخبار فترة المحاكاة">
+   <div className="news-inspection"><header><strong>أخبار فترة المحاكاة</strong><button onClick={()=>setOpen(false)} aria-label="إغلاق الأخبار">×</button></header>
+    <p>وقت المحاكاة: {format(cursor)} · الرياض</p>
+    <label>الفترة السابقة <select value={hours} onChange={e=>setHours(Number(e.target.value))}><option value={1}>ساعة</option><option value={6}>6 ساعات</option><option value={24}>24 ساعة</option><option value={72}>3 أيام</option><option value={168}>7 أيام</option></select></label>
+    <button disabled={busy} onClick={()=>setRetry(v=>v+1)}>{busy?'جار فحص الأرشيف…':'فحص الوقت الحالي'}</button>
+    {busy&&<p role="status">تحميل الأخبار مستقل عن الشارت. أول فحص للفترة قد يستغرق بضع ثوانٍ.</p>}
+    {error&&<p role="alert">{error}</p>}
+    {stale&&<p role="status">تغير وقت المحاكاة. أعد الفحص لعرض أخبار اللحظة الحالية.</p>}
+   </div>
+   <p className="macro-coverage">المصادر: أرشيف التضخم والوظائف الأمريكي وبيانات الفيدرالي، وتقارير سوق موثقة محدودة. ليست تغطية شاملة لأخبار الكريبتو؛ لا يُستنتج غياب الأخبار من غياب النتائج.</p>
+   {result&&!stale&&<>
+    <details><summary>حالة المصادر للفترة المختارة</summary>{result.coverage.map(c=><p key={c.source+c.month}>{names[c.source]} · {c.month}: {c.ok?'تم فحص الأرشيف':`تغطية غير مكتملة — ${c.error}`}</p>)}</details>
+    {!result.events.length&&<p role="status">{result.coverage.every(c=>c.ok)?'لم نجد إصدارًا ضمن الفترة المحددة في المصادر التي فُحصت.':'لا يمكن إكمال الفحص: بعض المصادر غير متاحة لهذه الفترة.'}</p>}
+    {result.events.map(e=><article key={e.id}><header><b>{e.title}</b><time>{format(e.time)} · الرياض</time></header><p>{e.summary}</p><a href={e.source} target="_blank" rel="noreferrer">قراءة المصدر ↗</a></article>)}
+    <p>التزامن مع الخبر لا يثبت أنه سبب الحركة. قارن توقيته مع تحليلك الفني؛ لا توجد إشارة دخول أو خروج مؤكدة هنا.</p>
+   </>}
   </section>}
  </div>;
 }

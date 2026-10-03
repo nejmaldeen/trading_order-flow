@@ -8,7 +8,7 @@ const records:Record[]=[
  {id:"fed-20260128",title:"قرار الفائدة الأمريكية",time:"2026-01-28T19:00:00Z",known:"2024-08-09T17:30:00Z",schedule:"https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm",source:"https://www.federalreserve.gov/newsevents/pressreleases/monetary20260128a.htm",summary:"ثبّت الاحتياطي الفيدرالي نطاق الفائدة عند 3.50–3.75%، مع الإشارة إلى استمرار ارتفاع التضخم نسبيًا."}
 ];
 export function macroAt(cursor:number):MacroSnapshot {
- return {cursor,coverage:"تغطية أولية: 3 إصدارات رسمية في يناير 2026 فقط؛ ليست تغطية شاملة للأخبار.",events:records.filter(e=>Date.parse(e.known)<=cursor).map(e=>{
+ return {cursor,coverage:"افتح الأخبار لفحص الأرشيف الرسمي للفترة المختارة. التغطية محدودة بالمصادر المبينة؛ لا تشمل جميع أخبار السوق.",events:records.filter(e=>Date.parse(e.known)<=cursor&&Math.abs(Date.parse(e.time)-cursor)<=31*86400000).map(e=>{
   const time=Date.parse(e.time), released=time<=cursor;
   return {id:e.id,title:e.title,time,status:released?"released":"upcoming",source:released?e.source:e.schedule,...(released?{summary:e.summary}:{})};
  })};
