@@ -1,3 +1,4 @@
+import { macroAt } from "@/lib/macro";
 import {validateStopLevels} from "@/lib/stop-levels";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
@@ -48,7 +49,7 @@ export async function GET(request:Request){
         try {return json({sessionId:session.id,...await olderHistory(session,timeframe,before)});}
         catch(err){return json({error:err instanceof Error?err.message:"تعذر تحميل التاريخ الأقدم."},502);}
       }
-      try { const history=await chartHistory(session,timeframe); return json({state,...history}); }
+      try { const history=await chartHistory(session,timeframe); return json({state,...history,macro:macroAt(session.cursorTime)}); }
       catch(err) { return json({state,error:err instanceof Error?err.message:"تعذر تحميل الشموع.",candles:[],source:null},502); }
     }
     return json({state});
@@ -131,6 +132,6 @@ export async function POST(request:Request){
       }
     }
     if(!await saveWorkspace(id,state,previous))return json({error:"حُفظ إجراء آخر بالتزامن. أعد تحميل الجلسة.",conflict:true},409);
-    return json({state,...extra});
+    return json({state,...extra,macro:session?macroAt(session.cursorTime):null});
   }catch(err){return json({error:err instanceof Error?err.message:"تعذر إكمال الإجراء."},err instanceof MarketError?502:500);}
 }

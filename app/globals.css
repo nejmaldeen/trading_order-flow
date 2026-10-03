@@ -513,3 +513,17 @@ th:first-child, td:first-child { padding-right: 16px; } th:last-child, td:last-c
  .simple-layout .ohlc-strip { overflow:hidden; }
  .simple-layout .replay-panel { padding:8px; }
 }
+.macro-panel { position:relative; margin-bottom:8px; }
+.macro-toggle { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:9px 12px; border:1px solid #303d48; border-radius:9px; background:#19232b; color:#d5e1eb; cursor:pointer; font-size:12px; }
+.macro-toggle small { color:#91a6b8; margin-inline-start:12px; }
+.macro-toggle.macro-alert { border-color:#9c7940; color:#f5d59e; background:#2c261c; }
+.macro-details { position:absolute; bottom:calc(100% + 8px); right:0; width:min(620px,calc(100vw - 75px)); max-height:min(480px,65vh); overflow:auto; z-index:25; padding:16px; background:#172029; border:1px solid #3d4c5c; border-radius:12px; box-shadow:0 14px 40px #0008; color:#d6dfe7; font-size:12px; }
+.macro-coverage { color:#e5bd7c; margin:0 0 12px; }
+.macro-answers { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+.macro-answers>div { padding:10px; border-radius:8px; background:#202d37; }
+.macro-answers small,.macro-answers strong { display:block; margin-bottom:6px; }
+.macro-answers small { color:#9eafbf; }.macro-details p { line-height:1.8; }
+.macro-details article { border-top:1px solid #34414f; padding-top:12px; margin-top:12px; }
+.macro-details header { display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; }
+.macro-details time { color:#a4b5c4; }.macro-details a { color:#7adac3; }
+@media(max-width:600px){.macro-answers { grid-template-columns:1fr; }.macro-toggle { flex-wrap:wrap; }}

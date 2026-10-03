@@ -49,6 +49,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { blank, appendReplayBatch, type SymbolName, type Timeframe, type Candle, type Session, type Trade, type Workspace, type OrderType } from "@/lib/replay";
+import MacroPanel from "@/components/macro-panel";
+import type {MacroSnapshot} from "@/lib/macro";
 import FloatingReplay from "@/components/floating-replay";
 import ChartDrawings from "@/components/chart-drawings";
 import StopLevelEditor from "@/components/stop-level-editor";
@@ -122,6 +124,7 @@ export default function TradingLab() {
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
   const [workspace, setWorkspace] = useState<Workspace>(blank);
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [macro,setMacro]=useState<MacroSnapshot|null>(null);
   const [startDate, setStartDate] = useState(riyadhInput);
   const startDateTouched = useRef(false);
   const [loading, setLoading] = useState(true);
@@ -262,13 +265,13 @@ export default function TradingLab() {
     setLoading(true); setDataReady(false); setPlaying(false); playingRef.current=false;
     try {
       const response = await fetch(`/api/lab?timeframe=${timeframe}`, {cache:"no-store",signal:AbortSignal.timeout(60000)});
-      const payload = await response.json() as {error?:string;state?:Workspace;candles?:Candle[];source?:string};
+      const payload = await response.json() as {error?:string;state?:Workspace;candles?:Candle[];source?:string;macro?:MacroSnapshot};
       const nextWorkspace=payload.state ?? blank;
       if(payload.state) { workspaceRef.current=nextWorkspace; setWorkspace(nextWorkspace); }
       const nextSession=nextWorkspace.sessions.find(item=>item.id===nextWorkspace.activeSessionId);
       if(nextSession) { if(!startDateTouched.current) setStartDate(dateTimeInputValue(nextSession.startTime)); setSymbol(nextSession.symbol); }
       if(!response.ok) throw new Error(payload.error || "تعذر تحميل الجلسة.");
-      setCandles(payload.candles ?? []); setSource(payload.source ?? "");
+      setMacro(payload.macro??null); setCandles(payload.candles ?? []); setSource(payload.source ?? "");
       setDataReady(Boolean(payload.candles?.length)); setError(""); followChart.current=true;
     } catch(err) { setError(err instanceof Error ? err.message : "تعذر الاتصال بالخادم."); }
     finally { actionBusy.current=false; setLoading(false); }
@@ -327,10 +330,11 @@ export default function TradingLab() {
         body: JSON.stringify({...body, revision: workspaceRef.current.revision, timeframe}),
         signal: AbortSignal.timeout(60000),
       });
-      const payload = (await response.json()) as { error?: string; state?: Workspace; candles?: Candle[]; source?: string; conflict?: boolean };
+      const payload = (await response.json()) as { error?: string; state?: Workspace; candles?: Candle[]; source?: string; macro?:MacroSnapshot; conflict?: boolean };
       if (!response.ok) { if(payload.conflict) setDataReady(false); throw new Error(payload.error ?? "لم يكتمل الإجراء."); }
       if (payload.state) { workspaceRef.current=payload.state; setWorkspace(payload.state); }
       if (payload.source) setSource(payload.source);
+      setMacro(payload.macro??null);
       if (body.action === "start") { setCandles(payload.candles ?? []); setDataReady(Boolean(payload.candles?.length)); followChart.current=true; }
 
       if (body.action === "step" && payload.candles?.length) {
@@ -488,6 +492,14 @@ export default function TradingLab() {
     } else markersRef.current?.setMarkers([]);
     if (candles.length && followChart.current) chartRef.current.timeScale().scrollToPosition(openTrade ? 32 : 8, false);
   }, [candles, showVwap, showVolume, longAvg, workspace.trades, session?.id, session?.cursorTime]);
+
+  useEffect(()=>{
+    if(!candleSeries.current||!macro||macro.cursor!==session?.cursorTime)return;
+    const duration={"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe];
+    const visible=macro.events.filter(e=>e.status==='released'&&e.time<=macro.cursor&&candles.some(c=>c.openTime===Math.floor(e.time/duration)*duration));
+    const plugin=createSeriesMarkers(candleSeries.current,visible.map(e=>({time:(Math.floor(e.time/duration)*duration/1000) as UTCTimestamp,position:'aboveBar' as const,color:'#e6b76b',shape:'circle' as const,text:e.title})),{autoScale:false});
+    return()=>plugin.detach();
+  },[macro,session?.cursorTime,timeframe,candles]);
 
   useEffect(() => {
     setStopLoss(openTrade ? String(openTrade.stopLoss) : "");
@@ -770,6 +782,7 @@ export default function TradingLab() {
           <div className="chart-area"><div className="chart-caption"><div className="active-indicators">{(Object.keys(indicators) as IndicatorKey[]).filter(k=>indicators[k].enabled).map(k=><button key={k} onClick={()=>setIndicatorsOpen(true)}>{k=== "bands" ? "BB" : k.toUpperCase()} {indicators[k].period}</button>)}</div><span>{currentSymbol.slice(0, -4)} / TetherUS · {periods.find((p) => p.key === timeframe)?.label} · Binance</span><div><span className="risk-drag-hint">↕ اسحب الدخول في المعاينة، أو الوقف والهدف</span><button onClick={() => setShowVolume(!showVolume)} className={showVolume ? "caption-active" : ""}><BarChart3 size={13} /> الحجم</button>{showVwap && <span className="vwap-key"><i /> VWAP يومي*</span>}</div></div><div className={`chart-host ${drawing ? "drawing-mode" : ""} ${selectReplayPoint ? "select-replay-mode" : ""}`} ref={chartHost} onWheel={()=>{followChart.current=false;}}>{floatingReplay&&<FloatingReplay playing={playing} disabled={loading||!session||!dataReady||Boolean(quickDraft)} speed={replaySpeed} time={fmtDate(session?.cursorTime??null)} selecting={selectReplayPoint} onToggle={()=>{if(playing)stopPlaying();else{playingRef.current=true;setPlaying(true);}}} onStep={()=>{stopPlaying();void advanceStep(1,"bar");}} onSpeed={setReplaySpeed} onClose={()=>setFloatingReplay(false)} onLatest={()=>{followChart.current=true;chartRef.current?.timeScale().scrollToPosition(32,false);}} onSelect={()=>{stopPlaying();setSelectReplayPoint(v=>!v);}}/>}<ChartDrawings key={`${currentSymbol}-${session?.id}`} chart={chartRef} series={candleSeries} candles={candles} storageKey={`replay-drawings-${currentSymbol}-${session?.id}`} onActive={drawingActive}/>{(openTrade||quickDraft)&&latest&&expectedEntry>0&&<RiskRewardOverlay chart={chartRef} series={candleSeries} levels={riskLinesRef} side={selectedSide} entry={expectedEntry} time={Math.floor((openTrade?.entryTime??quickDraft?.time??latest.openTime)/({"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe]))*({"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe])} amount={orderAmount} status={quickDraft?"↕ معاينة — لم تؤكد":openTrade?.status==="pending"?"معلق للدقيقة التالية":openTrade?.status==="close_pending"?"إغلاق معلق":"مفتوحة"} quantity={openTrade?.remainingQuantity??openTrade?.quantity} fee={openTrade?.entryPrice&&openTrade.quantity?openTrade.entryFee*(openTrade.remainingQuantity??openTrade.quantity)/openTrade.quantity:undefined} orderType={openTrade?.orderType??orderType} filled={!!openTrade?.entryPrice}/ >}{loading && candles.length === 0 ? <div className="chart-empty chart-loading"><span className="loading-spinner"><Activity size={18} /></span><strong>جار استعادة الجلسة والشموع</strong><span>نحمّل بيانات السوق حتى نقطة Replay المحفوظة.</span></div> : (!session || candles.length === 0) && <div className="chart-empty"><div className="empty-icon"><CalendarDays size={21} /></div><strong>{session ? "لا توجد شموع لهذه الفترة" : "اختر لحظة تاريخية وابدأ التدريب"}</strong><span>{session ? "قد لا تتوفر بيانات Binance لهذا الأصل والتاريخ. اختر تاريخًا ضمن فترة تداول الأصل." : "ستظهر الشموع تدريجيًا مع تحريك Replay، دون كشف بيانات لاحقة."}</span>{!session && <button onClick={() => void startReplay()} disabled={loading}><Play size={14} fill="currentColor" /> ابدأ Replay</button>}</div>}{selectReplayPoint && <span className="drawing-tip">انقر شمعة للبداية من موضعها · اضغط الزر مجددًا للإلغاء</span>}{drawing && <span className="drawing-tip">انقر على الشارت لإضافة مستوى سعري</span>}</div><div className="chart-footer"><span><span className="legend-candle green" /> صاعد <span className="legend-candle red" /> هابط</span><span>TradingView Lightweight Charts™</span><span className="timezone">التوقيت المحلي <ChevronDown size={12} /></span></div></div>
 
           <section className="replay-panel">
+            <MacroPanel data={macro} cursor={session?.cursorTime??0}/>
             <div className="replay-title"><strong>إعادة تشغيل السوق</strong><span className="replay-status" role="status">{loading ? "جار التحميل…" : !dataReady ? "بانتظار البيانات" : playing ? "قيد التشغيل" : "متوقف مؤقتًا"}</span><b className="cursor-time">{fmtDate(session?.cursorTime ?? null)}</b></div>
             <div className="replay-controls"><button className="play-button" onClick={()=>{if(playing)stopPlaying();else {playingRef.current=true;setPlaying(true);}}} disabled={!playing && (loading || !session || !dataReady || Boolean(quickDraft))} aria-label={playing?"إيقاف مؤقت":"تشغيل Replay"}>{playing?<Pause size={16}/>:<Play size={16}/>} {playing?"إيقاف مؤقت":"تشغيل"}</button><button className="step-button" onClick={()=>{stopPlaying();void advanceStep(1,"bar");}} disabled={loading || !session || !dataReady || Boolean(quickDraft)} title="تقدم شمعة واحدة حسب الفريم المختار"><SkipForward size={16}/> الشمعة التالية</button><label>السرعة <select aria-label="سرعة التشغيل" value={replaySpeed} onChange={e=>setReplaySpeed(Number(e.target.value))}>{[1,2,4,8,16,32,64].map(v=><option key={v} value={v}>{v}×</option>)}</select></label><button className="seek-chart" disabled={loading||!session||!dataReady||Boolean(quickDraft)} aria-pressed={selectReplayPoint} onClick={()=>{stopPlaying();setSelectReplayPoint(v=>!v);}}>{selectReplayPoint?"اختر شمعة من الشارت…":"ابدأ من الشارت"}</button><div className="replay-ticket"><label>مبلغ الدخول <input aria-label="مبلغ الدخول السريع USDT" type="number" min="1" step="0.01" disabled={Boolean(openTrade)} value={openTrade?.notional ?? notional} onChange={e=>setNotional(e.target.value)}/><span>USDT</span></label><button className="quick-long" aria-label="معاينة شراء" title="معاينة شراء قبل التأكيد" disabled={loading||!dataReady||!session||Boolean(openTrade)} onClick={()=>void quickOrder("long")}><ArrowUpRight size={20}/> شراء</button><button className="quick-short" aria-label="معاينة بيع" title="معاينة اتجاه بيع افتراضي قبل التأكيد" disabled={loading||!dataReady||!session||Boolean(openTrade)} onClick={()=>void quickOrder("short")}><ArrowDownRight size={20}/> بيع</button>{quickDraft&&<><button className="quick-long" disabled={loading} onClick={()=>void submitLong()}>تأكيد الدخول</button><button disabled={loading} onClick={cancelDraft}>إلغاء المعاينة</button></>}{openTrade?.status==="pending"&&<button disabled={loading} onClick={()=>void act({action:"cancel"})}>إلغاء الأمر</button>}<button className="ticket-open" onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:!v.orderOpen}));}}>{openTrade?'الصفقة الحالية':'إعداد الصفقة'}</button>{openTrade?.status==='open'&&<button disabled={loading} onClick={()=>void act({action:"close"})}>إغلاق الصفقة</button>}<button onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:true}));setStatsOpen(true);}}>الأداء</button></div></div>
             <details className="replay-session"><summary>التاريخ · جلسة جديدة</summary><div className="replay-date"><label className="date-input-wrap"><small>تاريخ الجلسة الجديدة</small><input type="date" aria-label="تاريخ بداية Replay" value={startDate.slice(0,10)} max={dateTimeInputValue(Date.now()).slice(0,10)} onChange={e=>updateStartDatePart("date",e.target.value)}/></label><label className="date-input-wrap time-input-wrap"><small>الوقت المحلي</small><input type="time" aria-label="وقت بداية Replay" step={60} value={startDate.slice(11,16)} onChange={e=>updateStartDatePart("time",e.target.value)}/></label><button onClick={()=>void startReplay()} disabled={loading}>جلسة جديدة · {symbol.slice(0,-4)}</button></div></details>
