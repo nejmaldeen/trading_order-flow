@@ -527,3 +527,7 @@ th:first-child, td:first-child { padding-right: 16px; } th:last-child, td:last-c
 .macro-details header { display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; }
 .macro-details time { color:#a4b5c4; }.macro-details a { color:#7adac3; }
 @media(max-width:600px){.macro-answers { grid-template-columns:1fr; }.macro-toggle { flex-wrap:wrap; }}
+.inspect-news { color:#e9c486!important; border:1px solid #665537!important; border-radius:7px; padding:6px 10px!important; }
+.news-inspection { border:1px solid #536373; padding:12px; border-radius:9px; margin-bottom:12px; background:#202c36; }
+.news-inspection button,.news-inspection select { padding:6px 10px; border:1px solid #536373; border-radius:6px; color:#e5eef5; background:#17212b; cursor:pointer; }
+.news-inspection small { color:#b0bdc9; }
