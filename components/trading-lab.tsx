@@ -320,10 +320,19 @@ export default function TradingLab() {
   },[session?.id,timeframe,dataReady,historyAvailable]);
   olderLoadRef.current=()=>{if(!historyError)void loadOlder();};
 
+  const confirmationBusy = useRef(false);
+  const [confirming, setConfirming] = useState(false);
+  const actionFinished = useRef<Promise<boolean> | null>(null);
+  const marketClose = useRef(latest?.close);
+  marketClose.current = latest?.close;
+
   const act = useCallback(async (body: Record<string, unknown>) => {
     if (actionBusy.current) return false;
     if(body.action==="start") {historyEpoch.current++;historyAbort.current?.abort();setHistoryAvailable(true);setHistoryError("");}
     actionBusy.current = true;
+    let finish!: (ok:boolean) => void;
+    let succeeded = false;
+    actionFinished.current = new Promise<boolean>(resolve => { finish = resolve; });
     setLoading(true);
     setError("");
     try {
@@ -341,9 +350,11 @@ export default function TradingLab() {
       if (body.action === "start") { setCandles(payload.candles ?? []); setDataReady(Boolean(payload.candles?.length)); followChart.current=true; }
 
       if (body.action === "step" && payload.candles?.length) {
+        marketClose.current = payload.candles.at(-1)?.close;
         setDataReady(true);
         setCandles((current) => appendReplayBatch(current, payload.candles!, timeframe));
       }
+      succeeded = true;
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "حدث خطأ غير متوقع.");
@@ -353,6 +364,8 @@ export default function TradingLab() {
     } finally {
       actionBusy.current = false;
       setLoading(false);
+      actionFinished.current = null;
+      finish(succeeded);
     }
   }, [timeframe]);
 
@@ -361,7 +374,7 @@ export default function TradingLab() {
     : null;
 
   const advanceStep = useCallback(async (count = 1, unit:"minute"|"bar"="minute") => {
-    if (!session || stepBusy.current || actionBusy.current) return;
+    if (!session || stepBusy.current || actionBusy.current || confirmationBusy.current) return;
     stepBusy.current = true;
     setLoading(true);
     try {
@@ -493,7 +506,10 @@ export default function TradingLab() {
         { time: (Math.floor((trade.entryTime ?? session?.cursorTime ?? 0) / ({"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe])) * ({"1m":60,"5m":300,"15m":900,"1h":3600,"4h":14400,"1d":86400}[timeframe])) as UTCTimestamp, position: trade.side==="short"?"aboveBar":"belowBar", color: trade.side==="short"?"#f05b68":"#12b886", shape: trade.side==="short"?"arrowDown":"arrowUp", text: trade.side==="short"?"بيع":"شراء" },
       ]);
     } else markersRef.current?.setMarkers([]);
-    if (candles.length && followChart.current) chartRef.current.timeScale().scrollToPosition(openTrade ? 32 : 8, false);
+    if (candles.length && followChart.current) {
+      const scale = chartRef.current.timeScale();
+      scale.scrollToPosition(openTrade || quickDraft ? Math.max(32, 280 / scale.options().barSpacing) : 8, false);
+    }
   }, [candles, showVwap, showVolume, longAvg, workspace.trades, session?.id, session?.cursorTime]);
 
   useEffect(()=>{
@@ -581,7 +597,7 @@ export default function TradingLab() {
       if((event.target as HTMLElement).closest(".floating-replay,.drawing-menu"))return;
       const series = candleSeries.current;
       const lines = riskLinesRef.current;
-      if (actionBusy.current || !series || drawingRef.current || technicalDrawingRef.current || !lines.stop || !lines.target) return;
+      if ((actionBusy.current && !draftDragRef.current) || !series || drawingRef.current || technicalDrawingRef.current || !lines.stop || !lines.target) return;
       followChart.current=false;
       const y = event.clientY - host.getBoundingClientRect().top;
       const candidates = (["stop", "target", "entry"] as const)
@@ -593,8 +609,8 @@ export default function TradingLab() {
         .sort((a, b) => a.distance - b.distance);
       const handle=(event.target as HTMLElement).closest<HTMLElement>("[data-risk-handle]")?.dataset.riskHandle;
       const selected = handle ? candidates.find(c=>c.kind===handle) : candidates[0];
-      if (!selected || (!handle && selected.distance > 13)) return;
-      playingRef.current=false; setPlaying(false);
+      if (!selected || !lines[selected.kind] || (!handle && selected.distance > 13)) return;
+      if (!draftDragRef.current) { playingRef.current=false; setPlaying(false); }
       chartRef.current?.priceScale("right").applyOptions({autoScale:false});
       chartRef.current?.applyOptions({handleScroll:false,handleScale:false});
       draggingRiskRef.current = selected.kind;
@@ -628,7 +644,7 @@ export default function TradingLab() {
       const stop = lines.stop ? Number(lines.stop.price.toFixed(2)) : undefined;
       const target = lines.target ? Number(lines.target.price.toFixed(2)) : undefined;
       if (stop === undefined || target === undefined) return;
-      const formatDraft = (value: number) => value.toFixed(latest?.close && latest.close >= 1000 ? 2 : 4);
+      const formatDraft = (value: number) => value.toFixed(2);
       setStopLoss(formatDraft(stop));
       setTakeProfit(formatDraft(target));
       if (riskSubmitRef.current) {
@@ -675,7 +691,7 @@ export default function TradingLab() {
       host.removeEventListener("pointerup", onPointerUp, true);
       host.removeEventListener("pointercancel", onPointerCancel, true);
     };
-  }, [latest?.close]);
+  }, []);
 
   draftDragRef.current = quickDraft ? (kind,value) => {
     if(kind==="entry") {
@@ -715,22 +731,29 @@ export default function TradingLab() {
     void act({action:"start", symbol: currentSymbol, startTime, confirmReplace: replace});
   };
   const submitLong = async () => {
-    const close = latest?.close;
+    if (confirmationBusy.current) return;
+    confirmationBusy.current = true;
+    setConfirming(true);
+    try {
+    if (actionFinished.current && !await actionFinished.current) return;
+    if (actionBusy.current) return;
+    const close = marketClose.current;
     if (!close) return setError("ابدأ المحاكاة حتى تظهر الشموع قبل وضع الأمر.");
-    const reference = orderType === "market" ? close : Number(orderPrice);
+    const submitType = quickDraft ? draftOrderType(selectedSide, quickDraft.entry, close) : orderType;
+    const reference = quickDraft?.entry ?? (submitType === "market" ? close : Number(orderPrice));
     const stop = Number(stopLoss || (reference * (1-direction*.01)).toFixed(close < 100 ? 4 : 2));
     const target = Number(takeProfit || (reference * (1+direction*.02)).toFixed(close < 100 ? 4 : 2));
     const issue=draftError(Number(notional),reference,stop,target,selectedSide,availableCash);
     if(issue) {setError(issue);return;}
-    const ok = await act({ action: "buy", side:selectedSide, notional: Number(notional), stopLoss: stop, takeProfit: target, orderType, orderPrice: orderType === "market" ? null : Number(orderPrice), reason, previewOriginal:quickDraft?draftOrigin.current:undefined });
+    const ok = await act({ action: "buy", side:selectedSide, notional: Number(notional), stopLoss: stop, takeProfit: target, orderType: submitType, orderPrice: submitType === "market" ? null : reference, reason, previewOriginal:quickDraft?draftOrigin.current:undefined });
     if (ok) {setReason("");setQuickDraft(null);}
+    } finally { confirmationBusy.current=false; setConfirming(false); }
   };
   const quickOrder = async(nextSide:"long"|"short")=>{
-    if(!latest||!session||!dataReady||actionBusy.current||openTrade)return;
-    if(stepBusy.current)return;
+    if(!latest||!session||!dataReady||openTrade)return;
     const amount=Number(notional);
     if(!Number.isFinite(amount)||amount<1||amount*(1+FEE_RATE)>availableCash){setError("أدخل مبلغًا صالحًا ضمن الرصيد المتاح مع الرسوم.");return;}
-    stopPlaying();setSide(nextSide);setOrderType("market");setOrderPrice("");
+    setSide(nextSide);setOrderType("market");setOrderPrice("");
     const d=nextSide==="short"?-1:1, stop=Number((latest.close*(1-d*.01)).toFixed(2)), target=Number((latest.close*(1+d*.02)).toFixed(2));
     setStopLoss(String(stop));setTakeProfit(String(target));
     draftOrigin.current={entry:latest.close,stop,target};
@@ -782,12 +805,12 @@ export default function TradingLab() {
           </div>
           <div className="chart-navigation"><button className="inspect-news" disabled={loading||!session||!macro||macro.cursor!==session.cursorTime} onClick={()=>setInspectNews(v=>v+1)}>◉ افحص أخبار هذه الحركة</button><details className="chart-options"><summary>عرض الشارت</summary><div className="chart-options-popover"><button disabled={historyLoading||!historyAvailable||!dataReady||loading} onClick={()=>void loadOlder()}>{historyLoading?"جار تحميل الشموع…":historyAvailable?"تحميل 500 شمعة أقدم":"بداية التاريخ المتاح"}</button><span className="history-count">{candles.length.toLocaleString("en-US")} شمعة</span>{historyError&&<span className="older-error" role="alert">{historyError}</span>}<button onClick={()=>zoom(.8)} aria-label="تكبير الشارت">＋ تكبير</button><button onClick={()=>zoom(1.25)} aria-label="تصغير الشارت">− تصغير</button><button onClick={()=>{followChart.current=true;chartRef.current?.timeScale().scrollToPosition(8, false);}}>آخر شمعة</button><button onClick={resetView}>ضبط العرض</button></div></details><button onClick={()=>setLayout(v=>({...v,historyOpen:!v.historyOpen}))}>{layout.historyOpen?"طي السجل":"السجل والصفقات"}</button></div>
           <div className="ohlc-strip"><span>{fmtDate(session?.cursorTime ?? null)}</span>{latest && <><span>فتح <b>{price(latest.open)}</b></span><span>أعلى <b className="positive">{price(latest.high)}</b></span><span>أدنى <b className="negative">{price(latest.low)}</b></span><span>إغلاق <b>{price(latest.close)}</b></span><span>حجم <b>{money(latest.volume, 2)}</b></span></>}</div>
-          <div className="chart-area"><div className="chart-caption"><div className="active-indicators">{(Object.keys(indicators) as IndicatorKey[]).filter(k=>indicators[k].enabled).map(k=><button key={k} onClick={()=>setIndicatorsOpen(true)}>{k=== "bands" ? "BB" : k.toUpperCase()} {indicators[k].period}</button>)}</div><span>{currentSymbol.slice(0, -4)} / TetherUS · {periods.find((p) => p.key === timeframe)?.label} · Binance</span><div><span className="risk-drag-hint">↕ اسحب الدخول في المعاينة، أو الوقف والهدف</span><button onClick={() => setShowVolume(!showVolume)} className={showVolume ? "caption-active" : ""}><BarChart3 size={13} /> الحجم</button>{showVwap && <span className="vwap-key"><i /> VWAP يومي*</span>}</div></div><div className={`chart-host ${drawing ? "drawing-mode" : ""} ${selectReplayPoint ? "select-replay-mode" : ""}`} ref={chartHost} onWheel={()=>{followChart.current=false;}}>{floatingReplay&&<FloatingReplay playing={playing} disabled={loading||!session||!dataReady||Boolean(quickDraft)} speed={replaySpeed} time={fmtDate(session?.cursorTime??null)} selecting={selectReplayPoint} onToggle={()=>{if(playing)stopPlaying();else{playingRef.current=true;setPlaying(true);}}} onStep={()=>{stopPlaying();void advanceStep(1,"bar");}} onSpeed={setReplaySpeed} onClose={()=>setFloatingReplay(false)} onLatest={()=>{followChart.current=true;chartRef.current?.timeScale().scrollToPosition(32,false);}} onSelect={()=>{stopPlaying();setSelectReplayPoint(v=>!v);}}/>}<ChartDrawings key={`${currentSymbol}-${session?.id}`} chart={chartRef} series={candleSeries} candles={candles} storageKey={`replay-drawings-${currentSymbol}-${session?.id}`} onActive={drawingActive}/>{(openTrade||quickDraft)&&latest&&expectedEntry>0&&<RiskRewardOverlay chart={chartRef} series={candleSeries} levels={riskLinesRef} side={selectedSide} entry={expectedEntry} time={Math.floor((openTrade?.entryTime??quickDraft?.time??latest.openTime)/({"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe]))*({"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe])} amount={orderAmount} status={quickDraft?"↕ معاينة — لم تؤكد":openTrade?.status==="pending"?"معلق للدقيقة التالية":openTrade?.status==="close_pending"?"إغلاق معلق":"مفتوحة"} quantity={openTrade?.remainingQuantity??openTrade?.quantity} fee={openTrade?.entryPrice&&openTrade.quantity?openTrade.entryFee*(openTrade.remainingQuantity??openTrade.quantity)/openTrade.quantity:undefined} orderType={openTrade?.orderType??orderType} filled={!!openTrade?.entryPrice}/ >}{loading && candles.length === 0 ? <div className="chart-empty chart-loading"><span className="loading-spinner"><Activity size={18} /></span><strong>جار استعادة الجلسة والشموع</strong><span>نحمّل بيانات السوق حتى نقطة Replay المحفوظة.</span></div> : (!session || candles.length === 0) && <div className="chart-empty"><div className="empty-icon"><CalendarDays size={21} /></div><strong>{session ? "لا توجد شموع لهذه الفترة" : "اختر لحظة تاريخية وابدأ التدريب"}</strong><span>{session ? "قد لا تتوفر بيانات Binance لهذا الأصل والتاريخ. اختر تاريخًا ضمن فترة تداول الأصل." : "ستظهر الشموع تدريجيًا مع تحريك Replay، دون كشف بيانات لاحقة."}</span>{!session && <button onClick={() => void startReplay()} disabled={loading}><Play size={14} fill="currentColor" /> ابدأ Replay</button>}</div>}{selectReplayPoint && <span className="drawing-tip">انقر شمعة للبداية من موضعها · اضغط الزر مجددًا للإلغاء</span>}{drawing && <span className="drawing-tip">انقر على الشارت لإضافة مستوى سعري</span>}</div><div className="chart-footer"><span><span className="legend-candle green" /> صاعد <span className="legend-candle red" /> هابط</span><span>TradingView Lightweight Charts™</span><span className="timezone">التوقيت المحلي <ChevronDown size={12} /></span></div></div>
+          <div className="chart-area"><div className="chart-caption"><div className="active-indicators">{(Object.keys(indicators) as IndicatorKey[]).filter(k=>indicators[k].enabled).map(k=><button key={k} onClick={()=>setIndicatorsOpen(true)}>{k=== "bands" ? "BB" : k.toUpperCase()} {indicators[k].period}</button>)}</div><span>{currentSymbol.slice(0, -4)} / TetherUS · {periods.find((p) => p.key === timeframe)?.label} · Binance</span><div><span className="risk-drag-hint">↕ اسحب الدخول في المعاينة، أو الوقف والهدف</span><button onClick={() => setShowVolume(!showVolume)} className={showVolume ? "caption-active" : ""}><BarChart3 size={13} /> الحجم</button>{showVwap && <span className="vwap-key"><i /> VWAP يومي*</span>}</div></div><div className={`chart-host ${drawing ? "drawing-mode" : ""} ${selectReplayPoint ? "select-replay-mode" : ""}`} ref={chartHost} onWheel={()=>{followChart.current=false;}}>{floatingReplay&&<FloatingReplay playing={playing} disabled={loading||!session||!dataReady} speed={replaySpeed} time={fmtDate(session?.cursorTime??null)} selecting={selectReplayPoint} onToggle={()=>{if(playing)stopPlaying();else{playingRef.current=true;setPlaying(true);}}} onStep={()=>{stopPlaying();void advanceStep(1,"bar");}} onSpeed={setReplaySpeed} onClose={()=>setFloatingReplay(false)} onLatest={()=>{followChart.current=true;chartRef.current?.timeScale().scrollToPosition(32,false);}} onSelect={()=>{stopPlaying();setSelectReplayPoint(v=>!v);}}/>}<ChartDrawings key={`${currentSymbol}-${session?.id}`} chart={chartRef} series={candleSeries} candles={candles} storageKey={`replay-drawings-${currentSymbol}-${session?.id}`} onActive={drawingActive}/>{(openTrade||quickDraft)&&latest&&expectedEntry>0&&<RiskRewardOverlay chart={chartRef} series={candleSeries} levels={riskLinesRef} side={selectedSide} entry={expectedEntry} time={Math.floor((openTrade?.entryTime??latest.openTime)/({"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe]))*({"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe])} amount={orderAmount} status={quickDraft?"↕ معاينة — لم تؤكد":openTrade?.status==="pending"?"معلق للدقيقة التالية":openTrade?.status==="close_pending"?"إغلاق معلق":"مفتوحة"} quantity={openTrade?.remainingQuantity??openTrade?.quantity} fee={openTrade?.entryPrice&&openTrade.quantity?openTrade.entryFee*(openTrade.remainingQuantity??openTrade.quantity)/openTrade.quantity:undefined} orderType={openTrade?.orderType??orderType} filled={!!openTrade?.entryPrice}/ >}{loading && candles.length === 0 ? <div className="chart-empty chart-loading"><span className="loading-spinner"><Activity size={18} /></span><strong>جار استعادة الجلسة والشموع</strong><span>نحمّل بيانات السوق حتى نقطة Replay المحفوظة.</span></div> : (!session || candles.length === 0) && <div className="chart-empty"><div className="empty-icon"><CalendarDays size={21} /></div><strong>{session ? "لا توجد شموع لهذه الفترة" : "اختر لحظة تاريخية وابدأ التدريب"}</strong><span>{session ? "قد لا تتوفر بيانات Binance لهذا الأصل والتاريخ. اختر تاريخًا ضمن فترة تداول الأصل." : "ستظهر الشموع تدريجيًا مع تحريك Replay، دون كشف بيانات لاحقة."}</span>{!session && <button onClick={() => void startReplay()} disabled={loading}><Play size={14} fill="currentColor" /> ابدأ Replay</button>}</div>}{selectReplayPoint && <span className="drawing-tip">انقر شمعة للبداية من موضعها · اضغط الزر مجددًا للإلغاء</span>}{drawing && <span className="drawing-tip">انقر على الشارت لإضافة مستوى سعري</span>}</div><div className="chart-footer"><span><span className="legend-candle green" /> صاعد <span className="legend-candle red" /> هابط</span><span>TradingView Lightweight Charts™</span><span className="timezone">التوقيت المحلي <ChevronDown size={12} /></span></div></div>
 
           <section className="replay-panel">
             <MacroPanel key={session?.id} data={macro} cursor={session?.cursorTime??0} sessionId={session?.id} inspectRequest={inspectNews} onEvents={setArchiveEvents}/>
             <div className="replay-title"><strong>إعادة تشغيل السوق</strong><span className="replay-status" role="status">{loading ? "جار التحميل…" : !dataReady ? "بانتظار البيانات" : playing ? "قيد التشغيل" : "متوقف مؤقتًا"}</span><b className="cursor-time">{fmtDate(session?.cursorTime ?? null)}</b></div>
-            <div className="replay-controls"><button className="play-button" onClick={()=>{if(playing)stopPlaying();else {playingRef.current=true;setPlaying(true);}}} disabled={!playing && (loading || !session || !dataReady || Boolean(quickDraft))} aria-label={playing?"إيقاف مؤقت":"تشغيل Replay"}>{playing?<Pause size={16}/>:<Play size={16}/>} {playing?"إيقاف مؤقت":"تشغيل"}</button><button className="step-button" onClick={()=>{stopPlaying();void advanceStep(1,"bar");}} disabled={loading || !session || !dataReady || Boolean(quickDraft)} title="تقدم شمعة واحدة حسب الفريم المختار"><SkipForward size={16}/> الشمعة التالية</button><label>السرعة <select aria-label="سرعة التشغيل" value={replaySpeed} onChange={e=>setReplaySpeed(Number(e.target.value))}>{[1,2,4,8,16,32,64].map(v=><option key={v} value={v}>{v}×</option>)}</select></label><button className="seek-chart" disabled={loading||!session||!dataReady||Boolean(quickDraft)} aria-pressed={selectReplayPoint} onClick={()=>{stopPlaying();setSelectReplayPoint(v=>!v);}}>{selectReplayPoint?"اختر شمعة من الشارت…":"ابدأ من الشارت"}</button><div className="replay-ticket"><label>مبلغ الدخول <input aria-label="مبلغ الدخول السريع USDT" type="number" min="1" step="0.01" disabled={Boolean(openTrade)} value={openTrade?.notional ?? notional} onChange={e=>setNotional(e.target.value)}/><span>USDT</span></label><button className="quick-long" aria-label="معاينة شراء" title="معاينة شراء قبل التأكيد" disabled={loading||!dataReady||!session||Boolean(openTrade)} onClick={()=>void quickOrder("long")}><ArrowUpRight size={20}/> شراء</button><button className="quick-short" aria-label="معاينة بيع" title="معاينة اتجاه بيع افتراضي قبل التأكيد" disabled={loading||!dataReady||!session||Boolean(openTrade)} onClick={()=>void quickOrder("short")}><ArrowDownRight size={20}/> بيع</button>{quickDraft&&<><button className="quick-long" disabled={loading} onClick={()=>void submitLong()}>تأكيد الدخول</button><button disabled={loading} onClick={cancelDraft}>إلغاء المعاينة</button></>}{openTrade?.status==="pending"&&<button disabled={loading} onClick={()=>void act({action:"cancel"})}>إلغاء الأمر</button>}<button className="ticket-open" onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:!v.orderOpen}));}}>{openTrade?'الصفقة الحالية':'إعداد الصفقة'}</button>{openTrade?.status==='open'&&<button disabled={loading} onClick={()=>void act({action:"close"})}>إغلاق الصفقة</button>}<button onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:true}));setStatsOpen(true);}}>الأداء</button></div></div>
+            <div className="replay-controls"><button className="play-button" onClick={()=>{if(playing)stopPlaying();else {playingRef.current=true;setPlaying(true);}}} disabled={!playing && (loading || !session || !dataReady)} aria-label={playing?"إيقاف مؤقت":"تشغيل Replay"}>{playing?<Pause size={16}/>:<Play size={16}/>} {playing?"إيقاف مؤقت":"تشغيل"}</button><button className="step-button" onClick={()=>{stopPlaying();void advanceStep(1,"bar");}} disabled={loading || !session || !dataReady} title="تقدم شمعة واحدة حسب الفريم المختار"><SkipForward size={16}/> الشمعة التالية</button><label>السرعة <select aria-label="سرعة التشغيل" value={replaySpeed} onChange={e=>setReplaySpeed(Number(e.target.value))}>{[1,2,4,8,16,32,64].map(v=><option key={v} value={v}>{v}×</option>)}</select></label><button className="seek-chart" disabled={loading||!session||!dataReady} aria-pressed={selectReplayPoint} onClick={()=>{stopPlaying();setSelectReplayPoint(v=>!v);}}>{selectReplayPoint?"اختر شمعة من الشارت…":"ابدأ من الشارت"}</button><div className="replay-ticket"><label>مبلغ الدخول <input aria-label="مبلغ الدخول السريع USDT" type="number" min="1" step="0.01" disabled={Boolean(openTrade)} value={openTrade?.notional ?? notional} onChange={e=>setNotional(e.target.value)}/><span>USDT</span></label><button className="quick-long" aria-label="معاينة شراء" title="معاينة شراء قبل التأكيد" disabled={!dataReady||!session||Boolean(openTrade)} onClick={()=>void quickOrder("long")}><ArrowUpRight size={20}/> شراء</button><button className="quick-short" aria-label="معاينة بيع" title="معاينة اتجاه بيع افتراضي قبل التأكيد" disabled={!dataReady||!session||Boolean(openTrade)} onClick={()=>void quickOrder("short")}><ArrowDownRight size={20}/> بيع</button>{quickDraft&&<><button className="quick-long" disabled={confirming} onClick={()=>void submitLong()}>{confirming?"جار تأكيد الدخول…":"تأكيد الدخول"}</button><button disabled={confirming} onClick={cancelDraft}>إلغاء المعاينة</button></>}{openTrade?.status==="pending"&&<button disabled={loading} onClick={()=>void act({action:"cancel"})}>إلغاء الأمر</button>}<button className="ticket-open" onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:!v.orderOpen}));}}>{openTrade?'الصفقة الحالية':'إعداد الصفقة'}</button>{openTrade?.status==='open'&&<button disabled={loading} onClick={()=>void act({action:"close"})}>إغلاق الصفقة</button>}<button onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:true}));setStatsOpen(true);}}>الأداء</button></div></div>
             <details className="replay-session"><summary>التاريخ · جلسة جديدة</summary><div className="replay-date"><label className="date-input-wrap"><small>تاريخ الجلسة الجديدة</small><input type="date" aria-label="تاريخ بداية Replay" value={startDate.slice(0,10)} max={dateTimeInputValue(Date.now()).slice(0,10)} onChange={e=>updateStartDatePart("date",e.target.value)}/></label><label className="date-input-wrap time-input-wrap"><small>الوقت المحلي</small><input type="time" aria-label="وقت بداية Replay" step={60} value={startDate.slice(11,16)} onChange={e=>updateStartDatePart("time",e.target.value)}/></label><button onClick={()=>void startReplay()} disabled={loading}>جلسة جديدة · {symbol.slice(0,-4)}</button></div></details>
             <details className="replay-guide"><summary>كيف تعمل المحاكاة؟</summary><p className="replay-explanation">{replaySpeed>=16 ? "تسريع الوقت: تُتجاوز فرص القرار بين الدقائق. " : ""}الخطوة = شمعة حسب الفريم؛ التشغيل المتواصل بالدقائق. شمعة {periods.find(p=>p.key===timeframe)?.label} تتحدّث حتى يكتمل إطارها.</p></details>
             {error && <div className="replay-error" role="alert"><span>{error}</span><button disabled={loading} onClick={()=>void load(true)}>إعادة تحميل الجلسة</button></div>}
@@ -806,7 +829,7 @@ export default function TradingLab() {
             {openTrade&&<p className="notice-pending">يسمح هذا الإصدار بصفقة نشطة واحدة؛ إضافة دخول ومتوسط سعر مجمع غير مدعومين بعد. أغلق الصفقة أو ألغِ الأمر أولًا.</p>}<div className="order-direction"><button aria-pressed={selectedSide==="long"} disabled={Boolean(openTrade)||Boolean(quickDraft)} onClick={()=>{setSide("long");setStopLoss("");setTakeProfit("");setOrderPrice("");}}>شراء Long</button><button aria-pressed={selectedSide==="short"} disabled={Boolean(openTrade)||Boolean(quickDraft)} onClick={()=>{setSide("short");setStopLoss("");setTakeProfit("");setOrderPrice("");}}>بيع Short</button></div><div className="order-type">{(["market","limit","stop"] as const).map(kind=><button key={kind} disabled={Boolean(openTrade)||Boolean(quickDraft)} className={orderType===kind?"active":""} onClick={()=>{setOrderType(kind);setOrderPrice(latest ? (latest.close*(kind==="limit"?1-direction*.005:1+direction*.005)).toFixed(2) : "");setStopLoss("");setTakeProfit("");}}>{orderLabels[kind]}</button>)}</div>
             <div className="order-body">{(quickDraft||orderType!=="market") && <label className="entry-price-field">{quickDraft?"سعر الدخول · يتحدد نوع الأمر تلقائيًا":orderType==="limit"?"سعر الأمر المحدد":"سعر تفعيل أمر الوقف"}<input aria-label="سعر الأمر" type="number" step="any" min="0" value={quickDraft?.entry ?? openTrade?.orderPrice ?? orderPrice} disabled={Boolean(openTrade)} onChange={e=>{setOrderPrice(e.target.value);if(quickDraft){const value=Number(e.target.value);setQuickDraft({...quickDraft,entry:value});setOrderType(draftOrderType(selectedSide,value,latest?.close??value));}}}/></label>}<p className="order-explanation">{orderType==="market"?"تنفيذ عند افتتاح الدقيقة التالية." : orderType==="limit"?"تنفيذ بسعر الحد أو أفضل وفق اتجاه الصفقة." : "أمر سوق عند بلوغ سعر التفعيل؛ ليس وقف خسارة."}</p><div className="order-field"><label htmlFor="entry-amount">مبلغ الدخول · USDT</label><div className="input-with-unit"><input id="entry-amount" type="number" min="1" step="0.01" disabled={Boolean(openTrade)} value={openTrade?.notional ?? notional} onChange={(e) => setNotional(e.target.value)} /><span>USDT</span></div><div className="quick-sizes">{[50, 100, 250, 500].map((amount) => <button key={amount} disabled={Boolean(openTrade)} className={orderAmount === amount ? "picked" : ""} onClick={() => setNotional(String(amount))}>{amount} USDT</button>)}</div><small className="cash-available">المتاح للدخول <b dir="ltr">{money(availableCash)} USDT</b></small></div>
               <div className="risk-fields"><label><span><i className="risk-dot stop" /> وقف الخسارة</span><input type="number" step="any" value={stopLoss || (activeRiskTrade ? String(activeRiskTrade.stopLoss) : "")} onChange={(e) => setStopLoss(e.target.value)} placeholder={latest ? price(expectedEntry * (1-direction*.01)) : "السعر"} /></label><label><span><i className="risk-dot target" /> جني الأرباح</span><input type="number" step="any" value={takeProfit || (activeRiskTrade ? String(activeRiskTrade.takeProfit) : "")} onChange={(e) => setTakeProfit(e.target.value)} placeholder={latest ? price(expectedEntry * (1+direction*.02)) : "السعر"} /></label></div>
-              <button className="buy-button" onClick={submitLong} disabled={loading || !session || !dataReady || Boolean(openTrade)}><span>{quickDraft?"تأكيد صفقة افتراضية":selectedSide==="short"?"بيع افتراضي":"شراء"} {currentSymbol.slice(0, -4)}</span><b dir="ltr">{Number.isFinite(orderAmount) && orderAmount > 0 ? money(orderAmount) : "—"} USDT</b></button>
+              <button className="buy-button" onClick={submitLong} disabled={confirming || !session || !dataReady || Boolean(openTrade)}><span>{quickDraft?"تأكيد صفقة افتراضية":selectedSide==="short"?"بيع افتراضي":"شراء"} {currentSymbol.slice(0, -4)}</span><b dir="ltr">{Number.isFinite(orderAmount) && orderAmount > 0 ? money(orderAmount) : "—"} USDT</b></button>
               <div className="cash-breakdown" aria-label="ملخص الصفقة بالدولار"><div><span>مبلغ الصفقة</span><b dir="ltr">{Number.isFinite(orderAmount) && orderAmount > 0 ? money(orderAmount) : "—"} USDT</b></div><div><span>رسوم الدخول</span><b dir="ltr">{cash ? money(cash.fee) : "—"} USDT</b></div><div className="cash-total"><span>الإجمالي مع الرسوم</span><b dir="ltr">{cash ? money(cash.total) : "—"} USDT</b></div><div><span>صافي النتيجة عند الوقف ≈</span><b dir="ltr" className={cash && cash.stopNet >= 0 ? "positive" : "negative"}>{cash ? signedCash(cash.stopNet) : "—"}</b></div><div><span>صافي النتيجة عند الهدف ≈</span><b dir="ltr" className={cash && cash.targetNet >= 0 ? "positive" : "negative"}>{cash ? signedCash(cash.targetNet) : "—"}</b></div><small>تقدير للكمية المتبقية بعد الرسوم؛ قد يتغير مع الفجوات والانزلاق.</small></div>
               <div className="risk-summary"><span>المخاطرة ≈ {cash&&equity>0?(Math.max(0,-cash.stopNet)/equity*100).toFixed(2):"—"}% من الرصيد · العائد / المخاطرة</span><b>{previewStop&&previewTarget&&direction*(expectedEntry-previewStop)>0?((direction*(previewTarget-expectedEntry))/(direction*(expectedEntry-previewStop))).toFixed(2):"—"} R</b></div>
               <label className="reason-label">مبرر الدخول<textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ما سبب دخولك؟ اكتب شروط الاستراتيجية…" maxLength={500} /></label>
