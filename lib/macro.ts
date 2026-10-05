@@ -1,4 +1,6 @@
+import archive from '../data/news-archive.json' with {type:'json'};
 export type MacroEvent = {id:string;title:string;time:number;status:"upcoming"|"released";source:string;summary?:string};
+const inflationReleases=Object.entries(archive.months).filter(([key])=>key.startsWith('ppi:')||key.startsWith('cpi:')).flatMap(([,month])=>month.records);
 export type MacroSnapshot = {cursor:number;coverage:string;events:MacroEvent[]};
 type Record = {id:string;title:string;time:string;known:string;schedule:string;source:string;summary:string};
 // Curated original releases. Never import this data module into a client component.
@@ -10,6 +12,6 @@ const records:Record[]=[
 export function macroAt(cursor:number):MacroSnapshot {
  return {cursor,coverage:"افتح الأخبار لفحص الأرشيف الرسمي للفترة المختارة. التغطية محدودة بالمصادر المبينة؛ لا تشمل جميع أخبار السوق.",events:records.filter(e=>Date.parse(e.known)<=cursor&&Math.abs(Date.parse(e.time)-cursor)<=31*86400000).map(e=>{
   const time=Date.parse(e.time), released=time<=cursor;
-  return {id:e.id,title:e.title,time,status:released?"released":"upcoming",source:released?e.source:e.schedule,...(released?{summary:e.summary}:{})};
- })};
+  return {id:e.id,title:e.title,time,status:released?"released" as const:"upcoming" as const,source:released?e.source:e.schedule,...(released?{summary:e.summary}:{})};
+ }).concat(inflationReleases.filter(e=>e.time<=cursor&&e.time>=cursor-31*86400000&&!records.some(r=>r.id===e.id)).map(e=>({...e,status:'released' as const})))};
 }

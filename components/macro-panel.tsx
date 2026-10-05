@@ -2,8 +2,9 @@
 import {useEffect,useState} from 'react';
 import type {MacroSnapshot} from '@/lib/macro';
 import type {NewsRecord,NewsCoverage} from '@/lib/news-archive';
+import NewsSound from './news-sound';
 type Result={cursor:number;sessionId:string;hours:number;events:NewsRecord[];coverage:NewsCoverage[]};
-const names:Record<string,string>={cpi:'التضخم CPI',empsit:'الوظائف',fed:'الفيدرالي'};
+const names:Record<string,string>={cpi:'أسعار المستهلكين CPI',ppi:'أسعار المنتجين PPI',empsit:'الوظائف',fed:'الفيدرالي'};
 export default function MacroPanel({data,cursor,sessionId,inspectRequest=0,onEvents}:{data:MacroSnapshot|null;cursor:number;sessionId?:string;inspectRequest?:number;onEvents:(events:NewsRecord[])=>void}){
  const [open,setOpen]=useState(false),[hours,setHours]=useState(24),[retry,setRetry]=useState(0);
  const [result,setResult]=useState<Result|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -24,6 +25,7 @@ export default function MacroPanel({data,cursor,sessionId,inspectRequest=0,onEve
  const next=data?.cursor===cursor?data.events.find(e=>e.status==='upcoming'):undefined;
  const format=(t:number)=>new Intl.DateTimeFormat('ar-SA',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Riyadh'}).format(t);
  return <div className="macro-panel">
+  <NewsSound data={data?.cursor===cursor?data:null}/>
   <button className="macro-toggle" aria-expanded={open} onClick={()=>setOpen(!open)}><span>◉ الاقتصاد والأخبار</span><span>{next?`${next.title} · ${format(next.time)}`:'BTC · ETH'} · {open?'إغلاق':'فحص الفترة'}</span></button>
   {open&&<section className="macro-details" aria-label="أخبار فترة المحاكاة">
    <div className="news-inspection"><header><strong>أخبار فترة المحاكاة</strong><button onClick={()=>setOpen(false)} aria-label="إغلاق الأخبار">×</button></header>
@@ -34,7 +36,7 @@ export default function MacroPanel({data,cursor,sessionId,inspectRequest=0,onEve
     {error&&<p role="alert">{error}</p>}
     {stale&&<p role="status">تغير وقت المحاكاة. أعد الفحص لعرض أخبار اللحظة الحالية.</p>}
    </div>
-   <p className="macro-coverage">المصادر: أرشيف التضخم والوظائف الأمريكي وبيانات الفيدرالي، وتقارير سوق موثقة محدودة. ليست تغطية شاملة لأخبار الكريبتو؛ لا يُستنتج غياب الأخبار من غياب النتائج.</p>
+   <p className="macro-coverage">المصادر: أسعار المستهلكين CPI وأسعار المنتجين PPI والوظائف الأمريكية وبيانات الفيدرالي، وتقارير سوق موثقة محدودة. ليست تغطية شاملة لأخبار الكريبتو؛ لا يُستنتج غياب الأخبار من غياب النتائج.</p>
    {result&&!stale&&<>
     <details><summary>حالة المصادر للفترة المختارة</summary>{result.coverage.map(c=><p key={c.source+c.month}>{names[c.source]} · {c.month}: {c.ok?'تم فحص الأرشيف':`تغطية غير مكتملة — ${c.error}`}</p>)}</details>
     {!result.events.length&&<p role="status">{result.coverage.every(c=>c.ok)?'لم نجد إصدارًا ضمن الفترة المحددة في المصادر التي فُحصت.':'لا يمكن إكمال الفحص: بعض المصادر غير متاحة لهذه الفترة.'}</p>}

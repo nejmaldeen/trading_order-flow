@@ -18,7 +18,7 @@ export async function GET(request:Request){
   const session=row[0]?activeSession(normalizeWorkspace(JSON.parse(row[0].stateJson))):null;
   if(!session||session.id!==q.get('sessionId')||cursor>session.cursorTime)return json({error:'تغيرت الجلسة؛ أعد الفحص'},409);
   const records:NewsRecord[]=[...verifiedReports],coverage:NewsCoverage[]=[];
-  await Promise.all(monthsFor(cursor,hours).flatMap(month=>(['cpi','empsit','fed'] as const).map(async source=>{
+  await Promise.all(monthsFor(cursor,hours).flatMap(month=>(['cpi','ppi','empsit','fed'] as const).map(async source=>{
    const result=await archiveMonth(source,month);records.push(...result.records);coverage.push({source,month,ok:!result.error,...(result.error?{error:result.error}:{})});
   })));
   return json({cursor,sessionId:session.id,hours,events:selectNews(records,cursor,hours),coverage});
