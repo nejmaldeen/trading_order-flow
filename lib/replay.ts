@@ -1,19 +1,96 @@
 export const FEE_RATE = 0.0015;
 export const SLIPPAGE = 0.0002;
-export const INITIAL_BALANCE = 1000;
-export const SYMBOLS = ["BTCUSDT", "ETHUSDT"] as const;
+export const INITIAL_BALANCE = 2500;
+export const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUTUSDT"] as const;
 export const DURATIONS = { "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000, "4h": 14400000, "1d": 86400000 };
 export type Timeframe = keyof typeof DURATIONS;
 export type SymbolName = typeof SYMBOLS[number];
+
+export const SYMBOL_INFO: Record<
+  SymbolName,
+  {
+    name: string;
+    arabicName: string;
+    base: string;
+    quote: string;
+    icon: string;
+    badgeColor: string;
+    digits: number;
+    description: string;
+  }
+> = {
+  BTCUSDT: {
+    name: "Bitcoin",
+    arabicName: "بيتكوين",
+    base: "BTC",
+    quote: "USDT",
+    icon: "₿",
+    badgeColor: "#f59e0b",
+    digits: 2,
+    description: "العملة المشفرة الأولى والأكبر",
+  },
+  ETHUSDT: {
+    name: "Ethereum",
+    arabicName: "إيثيريوم",
+    base: "ETH",
+    quote: "USDT",
+    icon: "Ξ",
+    badgeColor: "#60a5fa",
+    digits: 2,
+    description: "شبكة العقود الذكية واللامركزية",
+  },
+  SOLUSDT: {
+    name: "Solana",
+    arabicName: "سولانا",
+    base: "SOL",
+    quote: "USDT",
+    icon: "◎",
+    badgeColor: "#a855f7",
+    digits: 2,
+    description: "بلوكتشين عالي السرعة ومنخفض الرسوم",
+  },
+  XAUTUSDT: {
+    name: "Tether Gold",
+    arabicName: "ذهب تيزر (XAUT)",
+    base: "XAUT",
+    quote: "USDT",
+    icon: "🪙",
+    badgeColor: "#eab308",
+    digits: 2,
+    description: "ذهب رقمي معتمد مدعوم بأونصة ذهب حقيقي",
+  },
+};
 export type TradeSide = "long" | "short";
 export type OrderType = "market" | "limit" | "stop";
-export type Candle = { openTime: number; closeTime: number; open: number; high: number; low: number; close: number; volume: number };
-export type Session = { id: string; symbol: SymbolName; startTime: number; cursorTime: number; advancedBars: number; createdAt: string };
+export type Candle = {
+  openTime: number;
+  closeTime: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  takerBuyVolume?: number;
+  tradeCount?: number;
+};
+export type Session = { id: string; symbol: SymbolName; startTime: number; cursorTime: number; advancedBars: number; createdAt: string; isOffline?: boolean };
 export type TradeEvent = { kind: string; time: number; detail: string };
+
+export type TradeReflection = {
+  setupGrade?: "A+" | "A" | "B+" | "B" | "C+" | string;
+  strategy?: string;
+  emotion?: string;
+  confidence?: string;
+  notes?: string;
+  audioNote?: string;
+  createdAt?: number;
+};
+
 export type Trade = {
   remainingQuantity?: number;
   stopLevels?: {id:string;price:number;amount:number;eligibleTime:number;filled:boolean}[];
-  partialExits?: {price:number;quantity:number;fee:number;pnl:number;time:number}[];
+  takeProfitLevels?: {id:string;price:number;amount:number;percentage?:number;eligibleTime:number;filled:boolean}[];
+  partialExits?: {price:number;quantity:number;fee:number;pnl:number;time:number;type?:string}[];
   id: string; sessionId: string; symbol: SymbolName;
   status: "pending" | "open" | "close_pending" | "closed" | "cancelled";
   side?: TradeSide; referencePrice?: number | null;
@@ -24,20 +101,26 @@ export type Trade = {
   rMultiple: number | null; initialRisk: number | null; reason: string;
   entryTime: number | null; exitTime: number | null; createdAt: string;
   exitReason: string | null; events: TradeEvent[];
+  reflection?: TradeReflection;
 };
-export type Workspace = { revision: number; activeSessionId: string | null; sessions: Session[]; trades: Trade[] };
-export const blank: Workspace = { revision: 0, activeSessionId: null, sessions: [], trades: [] };
+export type Workspace = { revision: number; activeSessionId: string | null; sessions: Session[]; trades: Trade[]; initialBalance?: number };
+export const blank: Workspace = { revision: 0, activeSessionId: null, sessions: [], trades: [], initialBalance: INITIAL_BALANCE };
 export function normalizeWorkspace(raw: Partial<Workspace>): Workspace {
   return { ...blank, ...raw, revision: raw.revision ?? 0, sessions: raw.sessions ?? [],
+    initialBalance: raw.initialBalance ?? INITIAL_BALANCE,
     trades: (raw.trades ?? []).map(t => ({ ...t, side:t.side ?? "long", referencePrice:t.referencePrice ?? t.orderPrice ?? t.entryPrice ?? null, orderType: t.orderType ?? "market", orderPrice: t.orderPrice ?? null,
       eligibleTime: t.eligibleTime ?? 0, triggeredAt: t.triggeredAt ?? null,
       initialStop: t.initialStop ?? (t.initialRisk != null && t.quantity ? t.entryPrice! - (t.side==="short"?-1:1)*t.initialRisk / t.quantity : null),
-      initialTarget: t.initialTarget ?? null, exitReason: t.exitReason ?? null, events: t.events ?? [] })) };
+      initialTarget: t.initialTarget ?? null, exitReason: t.exitReason ?? null, events: t.events ?? [],
+      stopLevels: t.stopLevels ?? [], takeProfitLevels: t.takeProfitLevels ?? [],
+      reflection: t.reflection ?? undefined })) };
 }
 export function activeSession(state: Workspace) { return state.sessions.find(s => s.id === state.activeSessionId) ?? null; }
 export function event(trade: Trade, kind: string, time: number, detail: string) { trade.events.push({ kind, time, detail }); }
 export function validCandle(c: Candle, duration: number) {
-  return Object.values(c).every(Number.isFinite) && c.openTime % duration === 0 && c.closeTime === c.openTime + duration - 1 &&
+  return [c.openTime, c.closeTime, c.open, c.high, c.low, c.close, c.volume].every(Number.isFinite) &&
+    (c.takerBuyVolume === undefined || Number.isFinite(c.takerBuyVolume)) &&
+    c.openTime % duration === 0 && c.closeTime === c.openTime + duration - 1 &&
     Math.min(c.open, c.high, c.low, c.close) > 0 && c.volume >= 0 && c.high >= Math.max(c.open,c.close,c.low) && c.low <= Math.min(c.open,c.close,c.high);
 }
 export function validateMinutes(candles: Candle[], first: number, count: number, now = Date.now()) {
@@ -53,8 +136,20 @@ export function appendReplayBatch(current: Candle[], minutes: Candle[], timefram
   const start = Math.floor(minute.openTime / DURATIONS[timeframe]) * DURATIONS[timeframe];
   const previous = result.at(-1);
   if (previous && minute.closeTime <= previous.closeTime) continue;
-  if (previous?.openTime === start) result[result.length-1] = { ...previous, closeTime: minute.closeTime,
-    high: Math.max(previous.high,minute.high), low: Math.min(previous.low,minute.low), close: minute.close, volume: previous.volume+minute.volume };
+  if (previous?.openTime === start) result[result.length-1] = {
+    ...previous,
+    closeTime: minute.closeTime,
+    high: Math.max(previous.high, minute.high),
+    low: Math.min(previous.low, minute.low),
+    close: minute.close,
+    volume: previous.volume + minute.volume,
+    takerBuyVolume: (previous.takerBuyVolume !== undefined || minute.takerBuyVolume !== undefined)
+      ? (previous.takerBuyVolume ?? 0) + (minute.takerBuyVolume ?? 0)
+      : undefined,
+    tradeCount: (previous.tradeCount !== undefined || minute.tradeCount !== undefined)
+      ? (previous.tradeCount ?? 0) + (minute.tradeCount ?? 0)
+      : undefined,
+  };
   else result.push({...minute,openTime:start});
   }
   return result;
@@ -100,6 +195,27 @@ export function applyCandle(state: Workspace, session: Session, c: Candle) {
     }
     if (t.status === "close_pending") { finishTrade(t,c.open*(1-sign*SLIPPAGE),c.openTime,"إغلاق يدوي"); continue; }
     if (t.status !== "open") continue;
+
+    // Partial Take Profit Levels (سحب وجني الأرباح المجزأ)
+    const tpLevels=(t.takeProfitLevels??[]).filter(x=>!x.filled&&x.eligibleTime<=c.openTime&&sign*(x.price-(t.entryPrice??0))>0)
+      .sort((a,b)=>sign*(a.price-b.price));
+    for(const level of tpLevels) {
+      if(!(short?c.low<=level.price:c.high>=level.price)) continue;
+      const remaining=t.remainingQuantity??t.quantity!;
+      if(remaining<=1e-12) break;
+      const quantity=Math.min(remaining,level.amount/t.entryPrice!);
+      const fill=(intrabarEntry?level.price:short?Math.min(c.open,level.price):Math.max(c.open,level.price))*(1-sign*SLIPPAGE);
+      level.filled=true;
+      if(quantity>=remaining-1e-12) {finishTrade(t,fill,c.closeTime,`سحب الأرباح بالكامل عند ${level.price}`);break;}
+      const fee=fill*quantity*FEE_RATE;
+      const pnl=sign*(fill-t.entryPrice!)*quantity-t.entryFee*quantity/t.quantity!-fee;
+      (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,time:c.closeTime,type:"take-profit-partial"});
+      t.remainingQuantity=remaining-quantity;t.exitFee=(t.exitFee??0)+fee;
+      t.realizedPnl=(t.realizedPnl??0)+pnl;
+      event(t,"take-profit-partial",c.closeTime,`سحب أرباح ${level.percentage?level.percentage+'%':''} عند ${level.price} · تنفيذ ${fill} · ربح محقق +${pnl.toFixed(2)} USDT`);
+    }
+    if (t.status !== "open") continue;
+
     let partialStopHit=false;
     const levels=(t.stopLevels??[]).filter(x=>!x.filled&&x.eligibleTime<=c.openTime&&sign*(x.price-t.stopLoss)>0)
       .sort((a,b)=>sign*(b.price-a.price));
@@ -112,7 +228,7 @@ export function applyCandle(state: Workspace, session: Session, c: Candle) {
       if(quantity>=remaining-1e-12) {finishTrade(t,fill,c.closeTime,"الوقف الجزئي الأخير");break;}
       const fee=fill*quantity*FEE_RATE;
       const pnl=sign*(fill-t.entryPrice!)*quantity-t.entryFee*quantity/t.quantity!-fee;
-      (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,time:c.closeTime});
+      (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,time:c.closeTime,type:"partial-stop"});
       t.remainingQuantity=remaining-quantity;t.exitFee=(t.exitFee??0)+fee;
       t.realizedPnl=(t.realizedPnl??0)+pnl;
       event(t,"partial-stop",c.closeTime,`وقف جزئي ${level.price} · تنفيذ ${fill} · كمية ${quantity} · صافي ${pnl}`);

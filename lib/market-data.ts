@@ -1,5 +1,6 @@
 import { inflateRawSync } from "node:zlib";
 import { DURATIONS, appendReplayCandle, validCandle, validateMinutes, type Candle, type Session, type SymbolName, type Timeframe } from "./replay.ts";
+import { offlineMarketData } from "./offline-market.ts";
 
 export type MarketResult = { candles: Candle[]; source: string };
 export type MarketProvider = (symbol: SymbolName, interval: Timeframe, start: number, end: number) => Promise<MarketResult>;
@@ -11,7 +12,24 @@ export const HISTORY_PAGE_SIZE=500;
 export const HISTORY_START=Date.UTC(2017,7,17);
 export function parseRow(row: (string|number)[]): Candle {
   const ms=(v: string|number) => Math.floor(Number(v)/(Number(v)>1e14?1000:1));
-  return {openTime:ms(row[0]),open:Number(row[1]),high:Number(row[2]),low:Number(row[3]),close:Number(row[4]),volume:Number(row[5]),closeTime:ms(row[6])};
+  const c: Candle = {
+    openTime: ms(row[0]),
+    open: Number(row[1]),
+    high: Number(row[2]),
+    low: Number(row[3]),
+    close: Number(row[4]),
+    volume: Number(row[5]),
+    closeTime: ms(row[6]),
+  };
+  if (row[9] !== undefined) {
+    const num = Number(row[9]);
+    if (Number.isFinite(num)) c.takerBuyVolume = num;
+  }
+  if (row[8] !== undefined) {
+    const num = Number(row[8]);
+    if (Number.isFinite(num)) c.tradeCount = num;
+  }
+  return c;
 }
 // Read the single CSV from Binance's ZIP using central-directory sizes (also handles data descriptors).
 export function unzipCsv(bytes: Uint8Array): string {
@@ -71,7 +89,10 @@ export const marketData: MarketProvider = async (symbol,interval,start,end) => {
       const result:Candle[]=[];
       for(let next=start;next<=safeEnd;) {
         const query=new URLSearchParams({symbol,interval,startTime:String(next),endTime:String(safeEnd),limit:"1000"});
-        const response=await fetch(`https://data-api.binance.vision/api/v3/klines?${query}`,{signal:AbortSignal.timeout(10000)});
+        let response=await fetch(`https://data-api.binance.vision/api/v3/klines?${query}`,{signal:AbortSignal.timeout(10000)}).catch(()=>null);
+        if(!response || !response.ok) {
+          response=await fetch(`https://api.binance.com/api/v3/klines?${query}`,{signal:AbortSignal.timeout(10000)});
+        }
         if(!response.ok) { if([403,429,451].includes(response.status)) restRetryAfter=Date.now()+60000; throw new Error(`Binance API (${response.status})`); }
         const rows=await response.json() as (string|number)[][];
         const bars=rows.map(parseRow);
@@ -99,7 +120,13 @@ export const marketData: MarketProvider = async (symbol,interval,start,end) => {
       result.push(...daily);day+=DAY;
     }
     return {candles:result.filter(c=>c.openTime>=start && c.closeTime<=safeEnd),source:"Binance · الأرشيف الرسمي"};
-  } catch(err) { throw new MarketError(`${apiError}. ${err instanceof Error?err.message:"تعذر تحميل الأرشيف"} لم يتغير وقت المحاكاة.`); }
+  } catch(err) {
+    try {
+      const offline = await offlineMarketData(symbol, interval, start, safeEnd);
+      if (offline.candles.length > 0) return offline;
+    } catch {}
+    throw new MarketError(`${apiError}. ${err instanceof Error?err.message:"تعذر تحميل الأرشيف"} لم يتغير وقت المحاكاة.`);
+  }
 };
 export async function chartHistory(session:Session,timeframe:Timeframe,provider:MarketProvider=marketData) {
   const duration=DURATIONS[timeframe], cutoff=session.cursorTime;
