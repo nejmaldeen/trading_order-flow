@@ -1,6 +1,7 @@
 {
-  "name": "site-creator-vinext-starter",
-  "version": "0.1.0",
+  "name": "trading-order-flow",
+  "version": "1.0.0",
+  "description": "Institutional Trading Lab, Order Flow, Footprint, Bookmap and Market Replay Platform",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
