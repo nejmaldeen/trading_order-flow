@@ -134,21 +134,54 @@ const formatLocalTick = (time: Time, tickType: TickMarkType) => {
   if (tickType === TickMarkType.DayOfMonth) return new Intl.DateTimeFormat("ar", { day: "2-digit", month: "short" }).format(date);
   return new Intl.DateTimeFormat("ar", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
 };
-function computeDailyVwap(candles: Candle[]) {
-  let day = "";
-  let pv = 0;
-  let vol = 0;
-  return candles.map((candle) => {
-    const currentDay = new Date(candle.openTime).toISOString().slice(0, 10);
-    if (currentDay !== day) {
-      day = currentDay;
-      pv = 0;
-      vol = 0;
+export type VwapMode = "rolling" | "daily";
+
+function computeVwap(candles: Candle[], mode: VwapMode = "rolling", period: number = 20) {
+  if (!candles.length) return [];
+  if (mode === "daily") {
+    let day = "";
+    let pv = 0;
+    let vol = 0;
+    return candles.map((candle) => {
+      const currentDay = new Date(candle.openTime).toISOString().slice(0, 10);
+      if (currentDay !== day) {
+        day = currentDay;
+        pv = 0;
+        vol = 0;
+      }
+      const typicalPrice = (candle.high + candle.low + candle.close) / 3;
+      pv += typicalPrice * candle.volume;
+      vol += candle.volume;
+      return { time: (candle.openTime / 1000) as UTCTimestamp, value: pv / Math.max(vol, 1e-9) };
+    });
+  }
+
+  // Rolling window of N candles
+  const safePeriod = Math.max(2, Math.min(500, Math.floor(period) || 20));
+  return candles.map((candle, idx) => {
+    const startIdx = Math.max(0, idx - safePeriod + 1);
+    let pv = 0;
+    let vol = 0;
+    for (let i = startIdx; i <= idx; i++) {
+      const c = candles[i];
+      const typical = (c.high + c.low + c.close) / 3;
+      pv += typical * c.volume;
+      vol += c.volume;
     }
-    const typicalPrice = (candle.high + candle.low + candle.close) / 3;
-    pv += typicalPrice * candle.volume;
-    vol += candle.volume;
-    return { time: (candle.openTime / 1000) as UTCTimestamp, value: pv / Math.max(vol, 1) };
+    return { time: (candle.openTime / 1000) as UTCTimestamp, value: pv / Math.max(vol, 1e-9) };
+  });
+}
+
+function computeVolumeMa(candles: Candle[], period: number = 20) {
+  if (!candles.length) return [];
+  const safePeriod = Math.max(2, Math.min(200, Math.floor(period) || 20));
+  return candles.map((candle, idx) => {
+    if (idx + 1 < safePeriod) {
+      return { time: (candle.openTime / 1000) as UTCTimestamp, value: candle.volume };
+    }
+    const slice = candles.slice(idx - safePeriod + 1, idx + 1);
+    const avg = slice.reduce((sum, c) => sum + c.volume, 0) / safePeriod;
+    return { time: (candle.openTime / 1000) as UTCTimestamp, value: avg };
   });
 }
 
@@ -184,6 +217,10 @@ export default function TradingLab() {
   const volumeScaleRef = useRef(volumeScale);
   volumeScaleRef.current = volumeScale;
   const [showVwap, setShowVwap] = useState(false);
+  const [vwapPeriod, setVwapPeriod] = useState<number>(20);
+  const [vwapMode, setVwapMode] = useState<VwapMode>("rolling");
+  const [volumeMaPeriod, setVolumeMaPeriod] = useState<number>(20);
+  const [showVolumeMa, setShowVolumeMa] = useState<boolean>(false);
   const [drawing, setDrawing] = useState(false);
   const [drawnPrice, setDrawnPrice] = useState<number | null>(null);
   const [notional, setNotional] = useState("100");
@@ -296,6 +333,14 @@ export default function TradingLab() {
       if (Number.isFinite(savedWidth) && savedWidth >= 0.5 && savedWidth <= 2.0) setSvpWidthScale(savedWidth);
       const savedSpacious = localStorage.getItem("replay-chart-spacious");
       if (savedSpacious !== null) setChartSpaciousMode(savedSpacious === "true");
+      const savedVwapPeriod = Number(localStorage.getItem("replay-vwap-period"));
+      if (Number.isFinite(savedVwapPeriod) && savedVwapPeriod >= 2 && savedVwapPeriod <= 500) setVwapPeriod(savedVwapPeriod);
+      const savedVwapMode = localStorage.getItem("replay-vwap-mode") as VwapMode;
+      if (savedVwapMode === "rolling" || savedVwapMode === "daily") setVwapMode(savedVwapMode);
+      const savedVolMaPeriod = Number(localStorage.getItem("replay-vol-ma-period"));
+      if (Number.isFinite(savedVolMaPeriod) && savedVolMaPeriod >= 2 && savedVolMaPeriod <= 200) setVolumeMaPeriod(savedVolMaPeriod);
+      const savedShowVolMa = localStorage.getItem("replay-show-vol-ma");
+      if (savedShowVolMa !== null) setShowVolumeMa(savedShowVolMa === "true");
     } catch {}
     try {
       const savedTheme = loadSavedChartTheme();
@@ -338,6 +383,10 @@ export default function TradingLab() {
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-svp-grouping",svpGrouping);}catch{}},[svpGrouping,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-svp-width-scale",String(svpWidthScale));}catch{}},[svpWidthScale,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-chart-spacious",String(chartSpaciousMode));}catch{}},[chartSpaciousMode,prefsLoaded]);
+  useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-vwap-period",String(vwapPeriod));}catch{}},[vwapPeriod,prefsLoaded]);
+  useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-vwap-mode",vwapMode);}catch{}},[vwapMode,prefsLoaded]);
+  useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-vol-ma-period",String(volumeMaPeriod));}catch{}},[volumeMaPeriod,prefsLoaded]);
+  useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-vol-ma",String(showVolumeMa));}catch{}},[showVolumeMa,prefsLoaded]);
   const resizeStart = (e: ReactPointerEvent<HTMLDivElement>, kind: "order" | "history") => {
     e.currentTarget.setPointerCapture(e.pointerId); e.preventDefault();
     resizeRef.current = {kind, x:e.clientX, y:e.clientY, size:kind === "order" ? layout.width : layout.height};
@@ -387,6 +436,7 @@ export default function TradingLab() {
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeries = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeries = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const volumeMaSeries = useRef<ISeriesApi<"Line"> | null>(null);
   const vwapSeries = useRef<ISeriesApi<"Line"> | null>(null);
   const overlaySeries = useRef<ISeriesApi<"Line">[]>([]);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
@@ -437,7 +487,7 @@ export default function TradingLab() {
   const equity = startingBalance + allNetPnl;
   const latest = candles.at(-1);
   const change = latest ? ((latest.close - latest.open) / latest.open) * 100 : 0;
-  const longAvg = useMemo(() => computeDailyVwap(candles), [candles]);
+  const longAvg = useMemo(() => computeVwap(candles, vwapMode, vwapPeriod), [candles, vwapMode, vwapPeriod]);
   const parsedStartDate = new Date(startDate).getTime();
   const selectedStartTime = Number.isFinite(parsedStartDate)
     ? Math.floor(parsedStartDate / 60_000) * 60_000
@@ -664,6 +714,13 @@ export default function TradingLab() {
       visible: false,
     });
     const vwapRef = chart.addSeries(LineSeries, { color: "rgba(148, 163, 184, 0.75)", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    const volMaRef = chart.addSeries(LineSeries, {
+      color: "rgba(251, 191, 36, 0.85)", // golden amber line for Volume MA
+      lineWidth: 1,
+      priceScaleId: "volume",
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
     overlaySeries.current = [
       "#94a3b8", // SMA: Calm Institutional Slate
       "#60a5fa", // EMA: Soft Muted Blue
@@ -695,6 +752,7 @@ export default function TradingLab() {
     chartRef.current = chart;
     candleSeries.current = candlesRef;
     volumeSeries.current = volumeRef;
+    volumeMaSeries.current = volMaRef;
     vwapSeries.current = vwapRef;
     markersRef.current = markerPlugin;
     return () => {
@@ -704,6 +762,7 @@ export default function TradingLab() {
       chartRef.current = null;
       candleSeries.current = null;
       volumeSeries.current = null;
+      volumeMaSeries.current = null;
       vwapSeries.current = null;
       markersRef.current = null;
       overlaySeries.current = [];
@@ -788,6 +847,15 @@ export default function TradingLab() {
     else volumeSeries.current?.setData(volumeData);
     vwapSeries.current?.setData(!cleanChart && showVwap ? longAvg : []);
     volumeSeries.current?.applyOptions({ visible: !cleanChart && showVolume });
+    if (volumeMaSeries.current) {
+      if (!cleanChart && showVolume && showVolumeMa) {
+        const maData = computeVolumeMa(candles, volumeMaPeriod);
+        volumeMaSeries.current.setData(maData);
+        volumeMaSeries.current.applyOptions({ visible: true });
+      } else {
+        volumeMaSeries.current.applyOptions({ visible: false });
+      }
+    }
     const trade = workspace.trades.find((item) => item.sessionId === session?.id && ["open", "close_pending"].includes(item.status));
     if (!cleanChart && showTradeMarkers && trade && candleSeries.current) {
       markersRef.current?.setMarkers([
@@ -798,7 +866,7 @@ export default function TradingLab() {
       const scale = chartRef.current.timeScale();
       scale.scrollToPosition(openTrade || quickDraft ? Math.max(32, 280 / scale.options().barSpacing) : 8, false);
     }
-  }, [candles, showVwap, showVolume, longAvg, workspace.trades, session?.id, session?.cursorTime, cleanChart, showTradeMarkers]);
+  }, [candles, showVwap, showVolume, showVolumeMa, volumeMaPeriod, longAvg, workspace.trades, session?.id, session?.cursorTime, cleanChart, showTradeMarkers]);
 
   // Proactive upcoming macro news engine (anticipates news before the candle arrives)
   const upcomingMacro = useMemo(() => {
@@ -1701,10 +1769,19 @@ export default function TradingLab() {
             onChange={setIndicators}
             vwap={showVwap}
             onVwap={setShowVwap}
+            vwapPeriod={vwapPeriod}
+            onVwapPeriodChange={setVwapPeriod}
+            vwapMode={vwapMode}
+            onVwapModeChange={setVwapMode}
             volume={showVolume}
             onVolume={setShowVolume}
+            volumeMaPeriod={volumeMaPeriod}
+            onVolumeMaPeriodChange={setVolumeMaPeriod}
+            showVolumeMa={showVolumeMa}
+            onShowVolumeMaChange={setShowVolumeMa}
             sessionVolumeProfile={showSessionProfile}
             onSessionVolumeProfile={setShowSessionProfile}
+            sessionProfileGrouping={svpGrouping}
             institutionalConfig={institutionalConfig}
             onInstitutionalChange={(newCfg) => {
               setInstitutionalConfig(newCfg);
@@ -2049,7 +2126,16 @@ export default function TradingLab() {
                   </div>
                 )}
               </div>
-              {showVwap && <span className="vwap-key"><i /> VWAP</span>}
+              {showVwap && (
+                <span className="vwap-key" title={`طريقة حساب VWAP: ${vwapMode === "daily" ? "تراكمي من بداية اليوم UTC" : `نافذة متحركة لـ ${vwapPeriod} شمعة`}`}>
+                  <i /> VWAP ({vwapMode === "daily" ? "يومي" : `${vwapPeriod}ش`})
+                </span>
+              )}
+              {showVolume && showVolumeMa && (
+                <span className="vol-ma-key" title={`خط متوسط حجم التداول (${volumeMaPeriod} شمعة)`}>
+                  <i /> Vol MA ({volumeMaPeriod}ش)
+                </span>
+              )}
             </div>
           </div>
 

@@ -15,8 +15,8 @@ const catalog = [
   { id: "sma", name: "المتوسط المتحرك البسيط", code: "SMA", description: "متوسط الإغلاق لعدد الشموع المختار.", category: "standard" },
   { id: "ema", name: "المتوسط المتحرك الأُسّي", code: "EMA", description: "متوسط يمنح الشموع الحديثة وزنًا أكبر.", category: "standard" },
   { id: "bands", name: "نطاقات بولينجر", code: "Bollinger Bands", description: "متوسط متحرك ونطاقان بانحرافين معياريين.", category: "standard" },
-  { id: "vwap", name: "متوسط السعر المرجّح بالحجم", code: "VWAP", description: "تقدير يومي من الشموع المعروضة؛ بداية اليوم UTC.", category: "standard" },
-  { id: "volume", name: "أحجام التداول", code: "Volume", description: "حجم التداول لكل شمعة أسفل الشارت.", category: "standard" },
+  { id: "vwap", name: "متوسط السعر المرجّح بالحجم", code: "VWAP", description: "متوسط السعر الموزون بالحجم؛ يدعم نافذة الشموع المتحركة (Rolling) أو بداية اليوم UTC.", category: "standard" },
+  { id: "volume", name: "أحجام التداول", code: "Volume", description: "حجم التداول لكل شمعة أسفل الشارت، مع خط متوسط الحجم المتحرك (Volume MA).", category: "standard" },
 ] as const;
 
 type Props = {
@@ -26,10 +26,19 @@ type Props = {
   onChange: (v: IndicatorSettings) => void;
   vwap: boolean;
   onVwap: (v: boolean) => void;
+  vwapPeriod?: number;
+  onVwapPeriodChange?: (v: number) => void;
+  vwapMode?: "rolling" | "daily";
+  onVwapModeChange?: (m: "rolling" | "daily") => void;
   volume: boolean;
   onVolume: (v: boolean) => void;
+  volumeMaPeriod?: number;
+  onVolumeMaPeriodChange?: (v: number) => void;
+  showVolumeMa?: boolean;
+  onShowVolumeMaChange?: (v: boolean) => void;
   sessionVolumeProfile?: boolean;
   onSessionVolumeProfile?: (v: boolean) => void;
+  sessionProfileGrouping?: string;
   institutionalConfig?: InstitutionalChartConfig;
   onInstitutionalChange?: (v: InstitutionalChartConfig) => void;
   onOpenInstitutionalSettings?: () => void;
@@ -185,6 +194,81 @@ export default function IndicatorLibrary(p: Props) {
                     />{" "}
                     شمعة
                   </label>
+                )}
+                {x.id === "vwap" && (
+                  <div className="vwap-settings-block">
+                    <label className="indicator-period">
+                      الفترة{" "}
+                      <input
+                        aria-label="فترة VWAP بالشموع"
+                        type="number"
+                        min={2}
+                        max={500}
+                        value={p.vwapPeriod ?? 20}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          if (Number.isInteger(val) && val >= 2 && val <= 500) {
+                            p.onVwapPeriodChange?.(val);
+                          }
+                        }}
+                      />{" "}
+                      شمعة
+                    </label>
+                    <div className="vwap-mode-strip" role="group" aria-label="طريقة حساب VWAP">
+                      <button
+                        type="button"
+                        className={`vwap-mode-btn ${(p.vwapMode ?? "rolling") === "rolling" ? "active" : ""}`}
+                        onClick={() => p.onVwapModeChange?.("rolling")}
+                        title="حساب VWAP على نافذة متحركة لآخر N شمعة محددة"
+                      >
+                        نافذة متحركة ({p.vwapPeriod ?? 20} شمعة)
+                      </button>
+                      <button
+                        type="button"
+                        className={`vwap-mode-btn ${p.vwapMode === "daily" ? "active" : ""}`}
+                        onClick={() => p.onVwapModeChange?.("daily")}
+                        title="حساب VWAP تراكمي من بداية اليوم 00:00 UTC"
+                      >
+                        بداية اليوم UTC
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {x.id === "volume" && (
+                  <div className="volume-settings-block">
+                    <label className="indicator-period">
+                      متوسط الحجم (Volume MA){" "}
+                      <input
+                        aria-label="فترة متوسط حجم التداول بالشموع"
+                        type="number"
+                        min={2}
+                        max={200}
+                        value={p.volumeMaPeriod ?? 20}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          if (Number.isInteger(val) && val >= 2 && val <= 200) {
+                            p.onVolumeMaPeriodChange?.(val);
+                          }
+                        }}
+                      />{" "}
+                      شمعة
+                    </label>
+                    <label className="volume-ma-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={p.showVolumeMa ?? false}
+                        onChange={(e) => p.onShowVolumeMaChange?.(e.target.checked)}
+                      />
+                      <span>إظهار خط متوسط الحجم على الهستوجرام</span>
+                    </label>
+                  </div>
+                )}
+                {x.id === "session_profile" && (
+                  <div className="svp-indicator-info">
+                    <span className="svp-info-badge">
+                      نطاق التجميع الحالي: {p.sessionProfileGrouping === "week" ? "أسبوعي" : p.sessionProfileGrouping === "month" ? "شهري" : p.sessionProfileGrouping === "day" ? "يومي" : "تلقائي (أسبوعي على اليومي)"}
+                    </span>
+                  </div>
                 )}
                 {x.category === "orderflow" && p.onOpenInstitutionalSettings && (
                   <button
