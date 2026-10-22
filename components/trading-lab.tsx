@@ -2664,7 +2664,12 @@ export default function TradingLab() {
                     const currentPrice = latest?.close ?? trade.entryPrice ?? trade.orderPrice ?? 0;
                     const refPrice = trade.entryPrice ?? trade.orderPrice ?? currentPrice;
                     const pricePct = refPrice > 0 ? ((currentPrice - refPrice) / refPrice) * 100 * (isShort ? -1 : 1) : 0;
-                    const pnl = trade.entryPrice ? (trade.remainingQuantity ?? trade.quantity ?? 0) * (currentPrice - trade.entryPrice) * (isShort ? -1 : 1) : 0;
+                    const remainingQty = trade.remainingQuantity ?? trade.quantity ?? 0;
+                    const grossPnl = trade.entryPrice ? remainingQty * (currentPrice - trade.entryPrice) * (isShort ? -1 : 1) : 0;
+                    const allocatedEntryFee = trade.quantity && trade.quantity > 0 ? (trade.entryFee * remainingQty / trade.quantity) : (trade.notional * FEE_RATE);
+                    const estimatedExitFee = currentPrice * remainingQty * FEE_RATE;
+                    const totalEstimatedFees = allocatedEntryFee + estimatedExitFee;
+                    const netEstimatedPnl = grossPnl - totalEstimatedFees;
                     const isPending = trade.status === "pending";
 
                     return (
@@ -2694,10 +2699,13 @@ export default function TradingLab() {
                           </div>
                           {!isPending && (
                             <div>
-                              <small>الربح اللحظي</small>
-                              <b className={pnl >= 0 ? "positive" : "negative"} dir="ltr">
-                                {pnl >= 0 ? "+" : ""}{money(pnl)} $ ({pricePct >= 0 ? "+" : ""}{pricePct.toFixed(2)}%)
+                              <small>الصافي التقديري</small>
+                              <b className={netEstimatedPnl >= 0 ? "positive" : "negative"} dir="ltr" title={`ربح حركة السعر الإجمالي: ${grossPnl >= 0 ? "+" : ""}${money(grossPnl)}$ (${pricePct >= 0 ? "+" : ""}${pricePct.toFixed(2)}%) · الرسوم المقدرة: -${money(totalEstimatedFees)}$`}>
+                                {netEstimatedPnl >= 0 ? "+" : ""}{money(netEstimatedPnl)} $
                               </b>
+                              <span style={{ display: "block", fontSize: "10px", color: "#8fa3b7" }}>
+                                إجمالي: {grossPnl >= 0 ? "+" : ""}{money(grossPnl)}$ ({pricePct >= 0 ? "+" : ""}${pricePct.toFixed(2)}%)
+                              </span>
                             </div>
                           )}
                         </div>

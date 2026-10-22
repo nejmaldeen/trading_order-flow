@@ -90,7 +90,7 @@ export type Trade = {
   remainingQuantity?: number;
   stopLevels?: {id:string;price:number;amount:number;eligibleTime:number;filled:boolean}[];
   takeProfitLevels?: {id:string;price:number;amount:number;percentage?:number;eligibleTime:number;filled:boolean}[];
-  partialExits?: {price:number;quantity:number;fee:number;pnl:number;time:number;type?:string}[];
+  partialExits?: {price:number;quantity:number;fee:number;pnl:number;grossPnl?:number;time:number;type?:string}[];
   id: string; sessionId: string; symbol: SymbolName;
   status: "pending" | "open" | "close_pending" | "closed" | "cancelled";
   side?: TradeSide; referencePrice?: number | null;
@@ -98,6 +98,7 @@ export type Trade = {
   notional: number; quantity: number | null; entryPrice: number | null;
   stopLoss: number; takeProfit: number; initialStop: number | null; initialTarget: number | null;
   exitPrice: number | null; entryFee: number; exitFee: number; realizedPnl: number;
+  grossPnl?: number; totalFees?: number;
   rMultiple: number | null; initialRisk: number | null; reason: string;
   entryTime: number | null; exitTime: number | null; createdAt: string;
   exitReason: string | null; events: TradeEvent[];
@@ -108,12 +109,19 @@ export const blank: Workspace = { revision: 0, activeSessionId: null, sessions: 
 export function normalizeWorkspace(raw: Partial<Workspace>): Workspace {
   return { ...blank, ...raw, revision: raw.revision ?? 0, sessions: raw.sessions ?? [],
     initialBalance: raw.initialBalance ?? INITIAL_BALANCE,
-    trades: (raw.trades ?? []).map(t => ({ ...t, side:t.side ?? "long", referencePrice:t.referencePrice ?? t.orderPrice ?? t.entryPrice ?? null, orderType: t.orderType ?? "market", orderPrice: t.orderPrice ?? null,
-      eligibleTime: t.eligibleTime ?? 0, triggeredAt: t.triggeredAt ?? null,
-      initialStop: t.initialStop ?? (t.initialRisk != null && t.quantity ? t.entryPrice! - (t.side==="short"?-1:1)*t.initialRisk / t.quantity : null),
-      initialTarget: t.initialTarget ?? null, exitReason: t.exitReason ?? null, events: t.events ?? [],
-      stopLevels: t.stopLevels ?? [], takeProfitLevels: t.takeProfitLevels ?? [],
-      reflection: t.reflection ?? undefined })) };
+    trades: (raw.trades ?? []).map(t => {
+      const totalFees = t.totalFees ?? ((t.entryFee ?? 0) + (t.exitFee ?? 0));
+      const grossPnl = t.grossPnl ?? (t.status === "closed" ? t.realizedPnl + totalFees : 0);
+      return {
+        ...t, side: t.side ?? "long", referencePrice: t.referencePrice ?? t.orderPrice ?? t.entryPrice ?? null, orderType: t.orderType ?? "market", orderPrice: t.orderPrice ?? null,
+        eligibleTime: t.eligibleTime ?? 0, triggeredAt: t.triggeredAt ?? null,
+        initialStop: t.initialStop ?? (t.initialRisk != null && t.quantity ? t.entryPrice! - (t.side === "short" ? -1 : 1) * t.initialRisk / t.quantity : null),
+        initialTarget: t.initialTarget ?? null, exitReason: t.exitReason ?? null, events: t.events ?? [],
+        stopLevels: t.stopLevels ?? [], takeProfitLevels: t.takeProfitLevels ?? [],
+        totalFees, grossPnl,
+        reflection: t.reflection ?? undefined
+      };
+    }) };
 }
 export function activeSession(state: Workspace) { return state.sessions.find(s => s.id === state.activeSessionId) ?? null; }
 export function event(trade: Trade, kind: string, time: number, detail: string) { trade.events.push({ kind, time, detail }); }
@@ -156,15 +164,26 @@ export function appendReplayBatch(current: Candle[], minutes: Candle[], timefram
 }
 export function finishTrade(t: Trade, fill: number, time: number, reason: string) {
   if (t.entryPrice === null || t.quantity === null) return;
-  const remaining=t.remainingQuantity??t.quantity;
-  const previous=t.partialExits??[];
-  const fee=fill*remaining*FEE_RATE;
-  t.exitPrice=(previous.reduce((sum,x)=>sum+x.price*x.quantity,0)+fill*remaining)/t.quantity;
-  t.exitTime=time; t.exitFee=previous.reduce((sum,x)=>sum+x.fee,0)+fee;
-  t.realizedPnl=previous.reduce((sum,x)=>sum+x.pnl,0)+(t.side==="short"?-1:1)*(fill-t.entryPrice)*remaining-t.entryFee*remaining/t.quantity-fee;
-  t.remainingQuantity=0;
-  t.rMultiple=t.initialRisk && t.initialRisk>0 ? t.realizedPnl/t.initialRisk : null;
-  t.status="closed"; t.exitReason=reason; event(t,"closed",time,`${reason}: ${fill}`);
+  const remaining = t.remainingQuantity ?? t.quantity;
+  const previous = t.partialExits ?? [];
+  const fee = fill * remaining * FEE_RATE;
+  const sign = t.side === "short" ? -1 : 1;
+  const grossThisExit = sign * (fill - t.entryPrice) * remaining;
+  const allocatedEntryFee = t.entryFee * remaining / t.quantity;
+  const netThisExit = grossThisExit - allocatedEntryFee - fee;
+
+  t.exitPrice = (previous.reduce((sum, x) => sum + x.price * x.quantity, 0) + fill * remaining) / t.quantity;
+  t.exitTime = time;
+  t.exitFee = previous.reduce((sum, x) => sum + x.fee, 0) + fee;
+  t.totalFees = t.entryFee + t.exitFee;
+  const previousGross = previous.reduce((sum, x) => sum + (x.grossPnl ?? (x.pnl + x.fee + t.entryFee * x.quantity / t.quantity!)), 0);
+  t.grossPnl = previousGross + grossThisExit;
+  t.realizedPnl = previous.reduce((sum, x) => sum + x.pnl, 0) + netThisExit;
+  t.remainingQuantity = 0;
+  t.rMultiple = t.initialRisk && t.initialRisk > 0 ? t.realizedPnl / t.initialRisk : null;
+  t.status = "closed";
+  t.exitReason = reason;
+  event(t, "closed", time, `${reason}: تنفيذ ${fill} · ربح السعر: ${t.grossPnl >= 0 ? "+" : ""}${t.grossPnl.toFixed(2)}$ · الرسوم: -${t.totalFees.toFixed(2)}$ · الصافي: ${t.realizedPnl >= 0 ? "+" : ""}${t.realizedPnl.toFixed(2)}$`);
 }
 export function applyCandle(state: Workspace, session: Session, c: Candle) {
   for (const t of state.trades) {
@@ -207,12 +226,16 @@ export function applyCandle(state: Workspace, session: Session, c: Candle) {
       const fill=(intrabarEntry?level.price:short?Math.min(c.open,level.price):Math.max(c.open,level.price))*(1-sign*SLIPPAGE);
       level.filled=true;
       if(quantity>=remaining-1e-12) {finishTrade(t,fill,c.closeTime,`سحب الأرباح بالكامل عند ${level.price}`);break;}
+      const gross=sign*(fill-t.entryPrice!)*quantity;
       const fee=fill*quantity*FEE_RATE;
-      const pnl=sign*(fill-t.entryPrice!)*quantity-t.entryFee*quantity/t.quantity!-fee;
-      (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,time:c.closeTime,type:"take-profit-partial"});
+      const allocatedEntryFee=t.entryFee*quantity/t.quantity!;
+      const pnl=gross-allocatedEntryFee-fee;
+      (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,grossPnl:gross,time:c.closeTime,type:"take-profit-partial"});
       t.remainingQuantity=remaining-quantity;t.exitFee=(t.exitFee??0)+fee;
+      t.totalFees=(t.entryFee??0)+t.exitFee;
+      t.grossPnl=(t.grossPnl??0)+gross;
       t.realizedPnl=(t.realizedPnl??0)+pnl;
-      event(t,"take-profit-partial",c.closeTime,`سحب أرباح ${level.percentage?level.percentage+'%':''} عند ${level.price} · تنفيذ ${fill} · ربح محقق +${pnl.toFixed(2)} USDT`);
+      event(t,"take-profit-partial",c.closeTime,`سحب أرباح ${level.percentage?level.percentage+'%':''} عند ${level.price} · تنفيذ ${fill} · ربح السعر: ${gross>=0?"+":""}${gross.toFixed(2)}$ · الرسوم: -${(fee+allocatedEntryFee).toFixed(2)}$ · الصافي: ${pnl>=0?"+":""}${pnl.toFixed(2)}$`);
     }
     if (t.status !== "open") continue;
 
@@ -226,19 +249,24 @@ export function applyCandle(state: Workspace, session: Session, c: Candle) {
       const fill=(intrabarEntry?level.price:short?Math.max(c.open,level.price):Math.min(c.open,level.price))*(1-sign*SLIPPAGE);
       level.filled=true;partialStopHit=true;
       if(quantity>=remaining-1e-12) {finishTrade(t,fill,c.closeTime,"الوقف الجزئي الأخير");break;}
+      const gross=sign*(fill-t.entryPrice!)*quantity;
       const fee=fill*quantity*FEE_RATE;
-      const pnl=sign*(fill-t.entryPrice!)*quantity-t.entryFee*quantity/t.quantity!-fee;
-      (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,time:c.closeTime,type:"partial-stop"});
+      const allocatedEntryFee=t.entryFee*quantity/t.quantity!;
+      const pnl=gross-allocatedEntryFee-fee;
+      (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,grossPnl:gross,time:c.closeTime,type:"partial-stop"});
       t.remainingQuantity=remaining-quantity;t.exitFee=(t.exitFee??0)+fee;
+      t.totalFees=(t.entryFee??0)+t.exitFee;
+      t.grossPnl=(t.grossPnl??0)+gross;
       t.realizedPnl=(t.realizedPnl??0)+pnl;
-      event(t,"partial-stop",c.closeTime,`وقف جزئي ${level.price} · تنفيذ ${fill} · كمية ${quantity} · صافي ${pnl}`);
+      event(t,"partial-stop",c.closeTime,`وقف جزئي عند ${level.price} · تنفيذ ${fill} · حركة السعر: ${gross>=0?"+":""}${gross.toFixed(2)}$ · الرسوم: -${(fee+allocatedEntryFee).toFixed(2)}$ · الصافي: ${pnl>=0?"+":""}${pnl.toFixed(2)}$`);
     }
     if(t.status!=="open")continue;
     if (short?c.high>=t.stopLoss:c.low<=t.stopLoss) {
       // For an intrabar entry, the candle open preceded the fill and cannot be an exit fill.
       finishTrade(t,(intrabarEntry ? t.stopLoss : short?Math.max(c.open,t.stopLoss):Math.min(c.open,t.stopLoss))*(1-sign*SLIPPAGE),c.closeTime,"وقف الخسارة");
     } else if (!partialStopHit && !intrabarEntry && (short?c.low<=t.takeProfit:c.high>=t.takeProfit)) {
-      finishTrade(t,t.takeProfit,c.closeTime,"جني الأرباح");
+      const tpFill = short ? Math.min(c.open, t.takeProfit) : Math.max(c.open, t.takeProfit);
+      finishTrade(t,tpFill,c.closeTime,"جني الأرباح");
     }
     // Unknown intrabar ordering: stop-first; never credit an entry-bar target for an intrabar fill.
   }

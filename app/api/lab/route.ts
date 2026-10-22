@@ -192,6 +192,7 @@ export async function POST(request:Request){
         trade.remainingQuantity=newRemainingQty;
         trade.notional+=data.amount;
         trade.entryFee+=addedFee;
+        trade.initialRisk = Math.abs(newWeightedEntry - trade.stopLoss) * newTotalQty;
         event(trade,"scaled_in",session.cursorTime,`تعزيز الصفقة: إضافة ${data.amount} USDT بسعر ${fillPrice.toFixed(2)} · متوسط الدخول الجديد: ${newWeightedEntry.toFixed(2)}`);
       }
       if(data.action==="cancel"||data.action==="close"){

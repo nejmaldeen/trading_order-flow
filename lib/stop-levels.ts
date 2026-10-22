@@ -12,7 +12,9 @@ export function validateStopLevels(trade:Trade, levels:{price:number;amount:numb
 }
 
 export function validateTakeProfitLevels(trade: Trade, levels: { price: number; amount: number; percentage?: number }[], current: number) {
-  if (trade.status !== "open" || !trade.entryPrice || !trade.quantity) return "تتوفر مستويات جني الأرباح بعد تفعيل صفقة الشراء.";
+  const short = trade.side === "short";
+  const sign = short ? -1 : 1;
+  if (trade.status !== "open" || !trade.entryPrice || !trade.quantity) return "تتوفر مستويات جني الأرباح بعد تفعيل الصفقة.";
   if (levels.length > 5) return "الحد الأقصى خمسة مستويات لسحب الأرباح.";
   const available = (trade.remainingQuantity ?? trade.quantity) * trade.entryPrice;
   if (levels.some((x) => !Number.isFinite(x.price) || !Number.isFinite(x.amount) || x.price <= 0 || x.amount <= 0))
@@ -22,7 +24,13 @@ export function validateTakeProfitLevels(trade: Trade, levels: { price: number; 
   if (new Set(levels.map((x) => x.price)).size !== levels.length)
     return "استخدم أسعارًا مختلفة لمستويات جني الأرباح.";
   const entry = trade.entryPrice ?? current;
-  if (levels.some((x) => x.price <= entry))
-    return "يجب أن تكون مستويات جني أرباح الشراء أعلى من سعر الدخول.";
+  if (levels.some((x) => sign * (x.price - entry) <= 0))
+    return short
+      ? "يجب أن تكون مستويات جني أرباح البيع أدنى من سعر الدخول."
+      : "يجب أن تكون مستويات جني أرباح الشراء أعلى من سعر الدخول.";
+  if (trade.takeProfit && levels.some((x) => sign * (trade.takeProfit - x.price) < -1e-8))
+    return short
+      ? "يجب أن تكون مستويات جني الأرباح أعلى من أو مساوية للهدف النهائي."
+      : "يجب أن تكون مستويات جني الأرباح أدنى من أو مساوية للهدف النهائي.";
   return null;
 }
