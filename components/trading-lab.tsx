@@ -77,6 +77,7 @@ import InstitutionalHud from "@/components/institutional-hud";
 import InstitutionalChartOverlay from "@/components/institutional-chart-overlay";
 import InstitutionalSettingsModal from "@/components/institutional-settings-modal";
 import BookmapView from "@/components/bookmap-view";
+import DeepStatsGrid from "@/components/deep-stats-grid";
 import AccountBalanceModal from "@/components/account-balance-modal";
 import ChartThemeModal from "@/components/chart-theme-modal";
 import { CHART_THEMES, loadSavedChartTheme, saveChartTheme, type ChartTheme } from "@/lib/chart-themes";
@@ -245,6 +246,7 @@ export default function TradingLab() {
   const [showGrid, setShowGrid] = useState(true);
   const [showVolumeProfile, setShowVolumeProfile] = useState(false);
   const [showSessionProfile, setShowSessionProfile] = useState(false);
+  const [showDeepStats, setShowDeepStats] = useState(false);
   const [svpGrouping, setSvpGrouping] = useState<SessionGrouping>("auto");
   const [svpWidthScale, setSvpWidthScale] = useState<number>(1.0);
   const [chartSpaciousMode, setChartSpaciousMode] = useState<boolean>(false);
@@ -327,6 +329,8 @@ export default function TradingLab() {
     try {
       const savedSvp = localStorage.getItem("replay-show-session-profile");
       if (savedSvp !== null) setShowSessionProfile(savedSvp === "true");
+      const savedDeepStats = localStorage.getItem("replay-show-deep-stats");
+      if (savedDeepStats !== null) setShowDeepStats(savedDeepStats === "true");
       const savedGrouping = localStorage.getItem("replay-svp-grouping") as SessionGrouping;
       if (["auto", "day", "week", "month"].includes(savedGrouping)) setSvpGrouping(savedGrouping);
       const savedWidth = Number(localStorage.getItem("replay-svp-width-scale"));
@@ -380,6 +384,7 @@ export default function TradingLab() {
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-trade-markers",String(showTradeMarkers));}catch{}},[showTradeMarkers,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-news-markers",String(showNewsMarkers));}catch{}},[showNewsMarkers,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-session-profile",String(showSessionProfile));}catch{}},[showSessionProfile,prefsLoaded]);
+  useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-deep-stats",String(showDeepStats));}catch{}},[showDeepStats,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-svp-grouping",svpGrouping);}catch{}},[svpGrouping,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-svp-width-scale",String(svpWidthScale));}catch{}},[svpWidthScale,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-chart-spacious",String(chartSpaciousMode));}catch{}},[chartSpaciousMode,prefsLoaded]);
@@ -1781,6 +1786,8 @@ export default function TradingLab() {
             onShowVolumeMaChange={setShowVolumeMa}
             sessionVolumeProfile={showSessionProfile}
             onSessionVolumeProfile={setShowSessionProfile}
+            deepStats={showDeepStats}
+            onDeepStats={setShowDeepStats}
             sessionProfileGrouping={svpGrouping}
             institutionalConfig={institutionalConfig}
             onInstitutionalChange={(newCfg) => {
@@ -1885,6 +1892,17 @@ export default function TradingLab() {
                   </div>
                 </div>
               )}
+
+              {/* Deep Stats (Footprint Bar Statistics Grid) Toggle */}
+              <button
+                type="button"
+                className={`svp-mode-btn ${showDeepStats ? "active" : ""}`}
+                onClick={() => setShowDeepStats((v) => !v)}
+                title="تفعيل/إلغاء شريط إحصائيات البارات (Deep Stats & Footprint Delta) كفيديو Immery Gams"
+              >
+                <BarChart3 size={12} />
+                <span>إحصائيات البارات (Deep Stats)</span>
+              </button>
 
               <span className="toolbar-separator" />
 
@@ -2402,6 +2420,14 @@ export default function TradingLab() {
                 onBackToCandles={() => setChartViewMode("candles")}
               />
             </div>
+          )}
+
+          {showDeepStats && chartViewMode === "candles" && (
+            <DeepStatsGrid
+              candles={candles}
+              visible={showDeepStats}
+              onClose={() => setShowDeepStats(false)}
+            />
           )}
 
           <section className="replay-panel">

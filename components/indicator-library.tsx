@@ -6,6 +6,7 @@ import type { InstitutionalChartConfig } from "@/lib/institutional-chart-types";
 
 const catalog = [
   { id: "session_profile", name: "بروفايل سيولة الجلسات اليومية", code: "SVP · Session Profile", description: "توزيع السيولة الأفقي لكل يوم، منطقة القيمة (70%)، وخط السيطرة (POC).", category: "orderflow" },
+  { id: "deep_stats", name: "إحصائيات البارات والدلتا", code: "Deep Stats · Footprint", description: "شريط حراري أفقي متزامن مع كل شمعة يعرض الحجم، الدلتا، انقلاب الدلتا ورصد الامتصاص كفيديو Immery Gams.", category: "orderflow" },
   { id: "inst_liq", name: "برك التصفية المغناطيسية", code: "Coinglass Liq", description: "خطوط نيون أفقية على الشارت لمناطق تصفية الشورت واللونج الضخمة.", category: "orderflow" },
   { id: "inst_walls", name: "جدران السيولة والعمق", code: "Bookmap L3", description: "أشرطة أفقية مشعة على يمين الشارت توضح عروض الشراء والبيع المعلقة الكبرى.", category: "orderflow" },
   { id: "inst_bubbles", name: "فقاعات التدفق الحجمي", code: "Volume Bubbles", description: "فقاعات نيون متوهجة على الشموع تكبر ديناميكياً مع الصفقات السوقية الكبرى.", category: "orderflow" },
@@ -38,6 +39,8 @@ type Props = {
   onShowVolumeMaChange?: (v: boolean) => void;
   sessionVolumeProfile?: boolean;
   onSessionVolumeProfile?: (v: boolean) => void;
+  deepStats?: boolean;
+  onDeepStats?: (v: boolean) => void;
   sessionProfileGrouping?: string;
   institutionalConfig?: InstitutionalChartConfig;
   onInstitutionalChange?: (v: InstitutionalChartConfig) => void;
@@ -74,6 +77,7 @@ export default function IndicatorLibrary(p: Props) {
 
   const active = (id: string) => {
     if (id === "session_profile") return Boolean(p.sessionVolumeProfile);
+    if (id === "deep_stats") return Boolean(p.deepStats);
     if (id === "vwap") return p.vwap;
     if (id === "volume") return p.volume;
     if (id === "inst_liq") return Boolean(p.institutionalConfig?.showLiquidationPools);
@@ -86,6 +90,7 @@ export default function IndicatorLibrary(p: Props) {
 
   const toggle = (id: string) => {
     if (id === "session_profile") p.onSessionVolumeProfile?.(!p.sessionVolumeProfile);
+    else if (id === "deep_stats") p.onDeepStats?.(!p.deepStats);
     else if (id === "vwap") p.onVwap(!p.vwap);
     else if (id === "volume") p.onVolume(!p.volume);
     else if (id.startsWith("inst_") && p.institutionalConfig && p.onInstitutionalChange) {
