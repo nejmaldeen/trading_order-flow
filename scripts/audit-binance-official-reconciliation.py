@@ -122,10 +122,15 @@ def audit(day):
     left=right=poc;target=(total*70+99)//100;inside=byprice[poc]
     minimum=min(byprice);maximum=max(byprice)
     while inside<target and (left>minimum or right<maximum):
-        l=byprice.get(left-SCALE,-1) if left>minimum else -1
-        r=byprice.get(right+SCALE,-1) if right<maximum else -1
-        if l>=r:left-=SCALE;inside+=max(l,0)
-        else:right+=SCALE;inside+=max(r,0)
+        # Never advance beyond a boundary: empty price buckets are zero,
+        # whereas an exhausted side must be excluded from the tie-break.
+        can_left=left>minimum;can_right=right<maximum
+        l=byprice.get(left-SCALE,0) if can_left else None
+        r=byprice.get(right+SCALE,0) if can_right else None
+        if can_left and (not can_right or l>=r):
+            left-=SCALE;inside+=l
+        else:
+            right+=SCALE;inside+=r
     h=collections_sum(raw,"buy");s=collections_sum(raw,"sell")
     report={"day":day,"files":files,"klines":len(k),"tradesStats":rs,"aggStats":ags,
       "totalExecutedVolume":show(total),"takerBuyVolume":show(h),"takerSellVolume":show(s),
