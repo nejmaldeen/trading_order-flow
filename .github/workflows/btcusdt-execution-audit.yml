@@ -1,0 +1,33 @@
+name: BTCUSDT Executed Volume Integrity (research)
+on:
+  push:
+    branches:
+      - research/executed-volume-integrity
+permissions:
+  contents: read
+jobs:
+  real-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Diagnose external market data connectivity
+        run: |
+          getent hosts data.binance.vision || true
+          curl -IL --connect-timeout 8 --max-time 20 https://data.binance.vision/ || true
+          curl -fsS --connect-timeout 8 --max-time 20 https://data-api.binance.vision/api/v3/time || true
+      - name: Verify official SHA256 and cross-check executions vs klines
+        run: python3 scripts/audit-binance-official-reconciliation.py
+      - name: Run current project unit tests
+        if: always()
+        run: node --test tests/*.test.mjs
+      - name: Preserve report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: btcusdt-real-execution-audit
+          path: audit-results/official-report.json
+          if-no-files-found: warn
