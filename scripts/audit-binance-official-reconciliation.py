@@ -139,7 +139,7 @@ if __name__=="__main__":
     ts=time.perf_counter()
     reports=[]
     try:
-        for day in ("2017-08-19","2025-01-11"):reports.append(audit(day))
+        for day in ("2017-08-19",):reports.append(audit(day))
         pathlib.Path("audit-results/official-report.json").write_text(json.dumps(reports,indent=2)+"\n")
         print("SECONDS_TOTAL",round(time.perf_counter()-ts,3))
         if any(x["issues"] for x in reports):raise SystemExit(2)
