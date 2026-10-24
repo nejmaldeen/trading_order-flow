@@ -1,7 +1,8 @@
 name: BTCUSDT one-day audit smoke
 on:
   push:
-    branches: [research/executed-volume-integrity-smoke]
+    branches:
+      - research/executed-volume-integrity-smoke
 permissions:
   contents: read
 jobs:
