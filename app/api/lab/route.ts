@@ -3,6 +3,7 @@ import { macroAt } from "@/lib/macro";
 import { validateStopLevels, validateTakeProfitLevels } from "@/lib/stop-levels";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
+import { requestOwner } from "@/lib/personal-auth";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { workspaces } from "@/db/schema";
@@ -40,9 +41,9 @@ const actionSchema=z.discriminatedUnion("action",[
   z.object({action:z.literal("setBalance"),balance:z.number().positive().max(10000000),resetTrades:z.boolean().default(false)})
 ]);
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{"Cache-Control":"no-store, max-age=0"}});
-async function ownerId(){const h=await headers();return h.get("oai-authenticated-user-id")||(process.env.NODE_ENV!=="production"?"preview-owner":null);}
+async function ownerId(){return requestOwner(await headers());}
 async function readWorkspace(id:string){
-  const rows=await getDb().select().from(workspaces).where(eq(workspaces.ownerId,id)).limit(1);
+  const rows=await (await getDb()).select().from(workspaces).where(eq(workspaces.ownerId,id)).limit(1);
   const previous=rows[0]?.stateJson ?? null;
   return {previous,state:previous===null?structuredClone(blank):normalizeWorkspace(JSON.parse(previous))};
 }
@@ -50,8 +51,8 @@ async function saveWorkspace(id:string,state:Workspace,previous:string|null){
   state.revision++;
   const values={stateJson:JSON.stringify(state),updatedAt:new Date().toISOString()};
   const rows=previous===null
-    ? await getDb().insert(workspaces).values({ownerId:id,...values}).onConflictDoNothing().returning({id:workspaces.ownerId})
-    : await getDb().update(workspaces).set(values).where(and(eq(workspaces.ownerId,id),eq(workspaces.stateJson,previous))).returning({id:workspaces.ownerId});
+    ? await (await getDb()).insert(workspaces).values({ownerId:id,...values}).onConflictDoNothing().returning()
+    : await (await getDb()).update(workspaces).set(values).where(and(eq(workspaces.ownerId,id),eq(workspaces.stateJson,previous))).returning();
   return rows.length===1;
 }
 export async function GET(request:Request){
