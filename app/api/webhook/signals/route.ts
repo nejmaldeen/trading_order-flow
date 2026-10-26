@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
+import { requestOwner, privateHosting, sameOrigin } from "@/lib/personal-auth";
+import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
+    if (!requestOwner(request.headers)) return NextResponse.json({error:"يرجى تسجيل الدخول."},{status:401});
+    if (privateHosting() && !sameOrigin(request)) return NextResponse.json({error:"مصدر غير مسموح."},{status:403});
     const body = await request.json().catch(() => null);
 
     if (!body) {
@@ -13,21 +17,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const data = body as Record<string, any>;
-    const {
-      symbol = "BTCUSDT",
-      side = "long",
-      action = "buy",
-      price,
-      secret,
-      message,
-    } = data;
-
-    // Log the incoming signal for diagnostic/audit
-    console.log(`[TradingView Webhook Signal Received] ${side.toUpperCase()} ${symbol} @ ${price ?? "Market"}: ${message ?? ""}`);
-
+    const parsed = z.object({symbol:z.string().max(20).default("BTCUSDT"),side:z.enum(["long","short"]).default("long"),action:z.string().max(20).default("buy"),price:z.number().positive().optional(),message:z.string().max(500).optional()}).safeParse(body);
+    if (!parsed.success) return NextResponse.json({error:"إشارة غير صالحة."},{status:400});
+    const {symbol,side,action,price,message}=parsed.data;
+    // Diagnostic receipt only: never log user-supplied text or place an order.
     return NextResponse.json({
       success: true,
+      executed: false,
       receivedAt: new Date().toISOString(),
       signal: {
         symbol,
@@ -39,7 +35,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "تعذر معالجة الـ Webhook." },
+      { error: "تعذر معالجة الـ Webhook." },
       { status: 500 }
     );
   }

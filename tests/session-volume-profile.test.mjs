@@ -2,6 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { computeDailySessionProfiles, getUtcDayKey, getUtcWeekKey, getUtcMonthKey } from '../lib/session-volume-profile.ts';
 
+test('ISO week grouping uses the week year across December/January',()=>{
+  assert.equal(getUtcWeekKey(Date.UTC(2018,11,31)),'2019-W01');
+  assert.equal(getUtcWeekKey(Date.UTC(2021,0,1)),'2020-W53');
+});
+
+test('RTH early-close profile conserves volume and completed prior session remains unchanged',()=>{
+  const t=Date.parse('2025-11-28T14:30:00Z');
+  const bars=Array.from({length:210},(_,i)=>({openTime:t+i*60000,closeTime:t+(i+1)*60000-1,open:100,high:102,low:99,close:101,volume:10}));
+  const prior=computeDailySessionProfiles(bars,36,.7,'1m','day','America/New_York');
+  assert.equal(prior[0].profile.totalVolume,2100);assert.equal(prior[0].endTime,Date.parse('2025-11-28T18:00:00Z')-1);
+  const later=[...bars,{...bars[0],openTime:Date.parse('2025-12-01T14:30:00Z'),closeTime:Date.parse('2025-12-01T14:31:00Z')-1}];
+  assert.deepEqual(computeDailySessionProfiles(later,36,.7,'1m','day','America/New_York')[0],prior[0]);
+});
+
 test('getUtcDayKey: returns YYYY-MM-DD format correctly', () => {
   const ts = Date.UTC(2024, 2, 15, 14, 30); // 2024-03-15
   assert.equal(getUtcDayKey(ts), '2024-03-15');

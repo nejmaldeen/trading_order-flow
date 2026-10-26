@@ -10,10 +10,16 @@ test('live SIP API: four assets, RTH transitions, order lifecycle and durable re
   assert.equal(process.env.QA_ISOLATED_DB, 'yes', 'A separate QA database is required');
   const headers = {'Content-Type':'application/json','oai-authenticated-user-id':`sip-qa-${randomUUID()}`};
   let state = (await (await fetch(new URL('/api/lab',url),{headers})).json()).state;
-  async function act(input) {
+  async function act(input,attempt=0) {
     const started=Date.now();
     const response=await fetch(new URL('/api/lab',url),{method:'POST',headers,body:JSON.stringify({revision:state.revision,timeframe:'1m',...input}),signal:AbortSignal.timeout(240000)});
     const body=await response.json();
+    if(response.status===500 && body.error?.includes('انقطع اتصال Alpaca') && attempt<2) {
+      const unchanged=(await (await fetch(new URL('/api/lab',url),{headers})).json()).state;
+      assert.deepEqual(unchanged,state,'Upstream failure must not mutate saved state');
+      console.log(`${input.action}: upstream connection failed; saved state unchanged; retry ${attempt+1}`);
+      return act(input,attempt+1);
+    }
     assert.equal(response.status,200,`${input.action}: ${body.error}`);
     state=body.state;
     console.log(`${input.action} ${input.symbol??''}: ${body.candles?.length??0} bars, ${Date.now()-started} ms`);

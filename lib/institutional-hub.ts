@@ -1,6 +1,6 @@
 /**
  * Unified Institutional Data Hub & Connectors.
- * Provides official data adapters for Bookmap (L3/Heatmap), ATAS (Footprint/Delta), and Coinglass (Aggregated CVD/Liquidations).
+ * Provides illustrative OHLCV-derived estimates, not live data adapters for Bookmap (L3/Heatmap), ATAS (Footprint/Delta), and Coinglass (Aggregated CVD/Liquidations).
  */
 
 import type { Candle } from "@/lib/replay";
@@ -182,7 +182,7 @@ export function generateInstitutionalSnapshot(
   ];
 
   const atas: AtasFootprintMetrics = {
-    barOpenTime: lastBar ? lastBar.openTime : Math.floor(Date.now() / 900000) * 900000,
+    barOpenTime: lastBar ? lastBar.openTime : 0,
     pointOfControl,
     valueAreaHigh,
     valueAreaLow,
@@ -302,7 +302,7 @@ export function generateInstitutionalSnapshot(
     liquidityBands,
     icebergOrders: [
       {
-        time: Date.now() - 45000,
+        time: candles.at(-1)?.closeTime ?? 0,
         price: baseRound - gridStep,
         revealedVolume: 45.2,
         totalEstimatedVolume: 280.0,
@@ -317,7 +317,8 @@ export function generateInstitutionalSnapshot(
     const lastCandle = candles[candles.length - 1];
     const d = new Date(lastCandle.openTime);
     const todayUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-    const yesterdayUtc = todayUtc - 86400000;
+    const previous = candles.filter(c=>c.openTime<todayUtc).at(-1);
+    const yesterdayUtc = previous ? Math.floor(previous.openTime/86400000)*86400000 : todayUtc;
 
     const todayCandles = candles.filter((c) => c.openTime >= todayUtc);
     const yesterdayCandles = candles.filter(
@@ -336,9 +337,9 @@ export function generateInstitutionalSnapshot(
   }
 
   return {
-    coinglass: { status: "connected", pingMs: 24, data: coinglass },
-    bookmap: { status: "connected", pingMs: 8, data: bookmap },
-    atas: { status: "connected", pingMs: 12, data: atas },
+    coinglass: { status: "standby", pingMs: 0, data: coinglass },
+    bookmap: { status: "standby", pingMs: 0, data: bookmap },
+    atas: { status: "standby", pingMs: 0, data: atas },
     sessionOpens,
   };
 }

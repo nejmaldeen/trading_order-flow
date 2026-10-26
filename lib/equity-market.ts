@@ -44,9 +44,13 @@ async function request(path: string, calendar = false): Promise<unknown> {
   throw new Error('تعذر جلب Alpaca.');
 }
 export function validateEquityMinutes(candles: Candle[], expected: number[], now = Date.now()) {
-  if (candles.length !== expected.length) throw new Error(`بيانات الأسهم ناقصة: المتوقع ${expected.length} دقيقة والمستلم ${candles.length}؛ لم يتغير وقت المحاكاة.`);
+  const missing = expected.find((t,i) => candles[i]?.openTime !== t);
+  if (missing !== undefined || candles.length !== expected.length) throw new Error(`دقيقة RTH غير متاحة عند ${new Date(missing ?? expected.at(-1) ?? 0).toISOString()}: المتوقع ${expected.length} والمستلم ${candles.length}. قد لا توجد صفقات مؤهلة أو تكون البيانات ناقصة؛ لا يمكن الجزم من الشموع وحدها. أوقفت المحاكاة دون توليد شموع أو تغيير الوقت.`);
   for (let i = 0; i < candles.length; i++) if (!validCandle(candles[i], MINUTE) || candles[i].openTime !== expected[i] || candles[i].closeTime >= now)
     throw new Error(`دقيقة أسهم مفقودة أو غير صالحة عند ${new Date(expected[i]).toISOString()}؛ لم يتغير وقت المحاكاة.`);
+}
+function expectedMinutes(sessions: MarketSession[], start: number, end: number) {
+  return sessions.flatMap(s => { const times: number[] = []; for(let t=Math.max(s.open,Math.ceil(start/MINUTE)*MINUTE); t<s.close && t+MINUTE-1<=end; t+=MINUTE) times.push(t); return times; });
 }
 async function block(symbol: SymbolName, start: number): Promise<Block> {
   const id = `${symbol}:${start}`, hit = cache.get(id);
@@ -76,10 +80,11 @@ async function block(symbol: SymbolName, start: number): Promise<Block> {
       if (tokens.has(body.next_page_token)) throw new Error('تكررت صفحة Alpaca؛ رفض البيانات غير المكتملة.');
       tokens.add(body.next_page_token); query.set('page_token', body.next_page_token);
     }
-    const expected = sessions.flatMap(s => { const times: number[] = []; for (let t = s.open; t < s.close && t + MINUTE - 1 <= end; t += MINUTE) times.push(t); return times; });
-    validateEquityMinutes(candles, expected);
+    // Cache validated rows, but assess absent minutes only in the requested range.
+    // A later gap must not block an earlier complete replay step.
     const value = { sessions, candles };
-    if (cache.size >= 12) cache.delete(cache.keys().next().value!);
+    // A 90-day chart needs 13-14 weekly blocks; 12 caused complete cache churn.
+    if (cache.size >= 24) cache.delete(cache.keys().next().value!);
     cache.set(id, { value, expires: Date.now() + 5 * 60000 }); return value;
   })();
   pending.set(id, job);
@@ -87,7 +92,7 @@ async function block(symbol: SymbolName, start: number): Promise<Block> {
 }
 export async function equityRange(symbol: SymbolName, start: number, end: number): Promise<Block> {
   if (!isEquity(symbol)) throw new Error('أصل غير مدعوم في Alpaca.');
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < EQUITY_START || end - start > 100 * DAY) throw new Error('نطاق الأسهم غير صالح؛ اختر فترة منذ 2016 لا تتجاوز 100 يوم.');
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < EQUITY_START || end < start || end - start > 100 * DAY) throw new Error('نطاق الأسهم غير صالح؛ اختر فترة منذ 2016 لا تتجاوز 100 يوم.');
   end = Math.min(end, latestEquityMinute() + MINUTE - 1);
   const candles: Candle[] = [], sessions: MarketSession[] = [];
   for (let t = Math.floor(start / (7 * DAY)) * 7 * DAY; t <= end; t += 7 * DAY) {
@@ -112,34 +117,44 @@ export async function equityHistory(session: Session, timeframe: Timeframe, befo
   const end = Math.min(before - 1, session.cursorTime);
   const start = Math.max(EQUITY_START, Math.floor((end - days * DAY) / DAY) * DAY);
   const b = await equityRange(session.symbol, start, end);
+  validateEquityMinutes(b.candles,expectedMinutes(b.sessions,start,end));
   return { candles: aggregateEquity(b.candles, timeframe, b.sessions).filter(c => c.openTime < before).slice(-500), source: EQUITY_SOURCE, hasMore: start > EQUITY_START };
 }
 export async function equityStep(session: Session, count: number, timeframe?: Timeframe) {
   const first = session.cursorTime + 1;
   let b: Block = { candles: [], sessions: [] };
+  let planned: number[] = [];
   // Most advances stay in the current cached week. Expand only across closures.
   for (const days of [1, 4, 14]) {
-    b = await equityRange(session.symbol, Math.max(EQUITY_START, first), first + days * DAY);
-    if (timeframe && b.candles.length) {
-      const next = b.candles[0].openTime;
+    const end = Math.min(Math.floor(first/DAY)*DAY + days*DAY - 1,latestEquityMinute()+MINUTE-1);
+    b = await equityRange(session.symbol, Math.max(EQUITY_START, first), end);
+    planned = expectedMinutes(b.sessions,first,end);
+    if (timeframe && planned.length) {
+      const next = planned[0];
       const day = b.sessions.find(s => next >= s.open && next < s.close)!;
       const boundary = Math.min(day.close, day.open + (Math.floor((next-day.open)/DURATIONS[timeframe])+1)*DURATIONS[timeframe]);
       count = (boundary-next)/MINUTE;
     }
-    if (b.candles.length >= count) break;
+    if (planned.length >= count) break;
   }
   const candles = b.candles.slice(0, count);
-  const expected = b.sessions.flatMap(s => { const times: number[] = []; for (let t = Math.max(s.open, first); t < s.close; t += MINUTE) times.push(t); return times; }).slice(0, count);
-  if (candles.length !== count) throw new Error('لا تتوفر دقائق تنفيذ مكتملة كافية؛ اختر تاريخًا أقدم.');
+  const expected = planned.slice(0,count);
+  if (expected.length !== count) throw new Error('لا تتوفر دقائق تنفيذ مكتملة كافية؛ اختر تاريخًا أقدم.');
   validateEquityMinutes(candles, expected);
   return { candles, expected, count, source: EQUITY_SOURCE };
 }
 export async function checkEquityStart(symbol: SymbolName, time: number) {
   if (time < EQUITY_START || time > latestEquityMinute()) throw new Error('اختر جلسة أسهم منذ 2016 وأقدم من 16 دقيقة؛ التغطية الفعلية تُفحص قبل البدء.');
-  const b = await equityRange(symbol, time, time + 7 * DAY);
+  let b = await equityRange(symbol, time, Math.floor(time/DAY)*DAY+DAY-1);
+  if (b.sessions.some(s=>time>=s.open && time<s.close)) {
+    validateEquityMinutes(b.candles.filter(c=>c.openTime===time),[time]);
+    return;
+  }
+  if (!b.candles.length) b = await equityRange(symbol,time,time+7*DAY);
   const first = b.candles[0];
   if (!first) throw new Error('لا توجد بيانات تنفيذ متاحة لهذه البداية.');
   if (first.openTime !== time) throw new Error(`الوقت خارج جلسة متاحة. البداية المقترحة: ${new Date(first.openTime).toISOString()} (UTC).`);
+  validateEquityMinutes([first],[time]);
 }
 
 export async function latestEquityStart(symbol: SymbolName) {

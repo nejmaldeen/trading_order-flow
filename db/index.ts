@@ -15,6 +15,7 @@ export async function getDb() {
       // Idempotent initialization of the existing session schema only. No market archive.
       ready = client.batch([
         'CREATE TABLE IF NOT EXISTS trading_workspaces (owner_id TEXT PRIMARY KEY NOT NULL, state_json TEXT NOT NULL, updated_at TEXT NOT NULL)',
+        'CREATE TABLE IF NOT EXISTS login_attempts (id TEXT PRIMARY KEY NOT NULL, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL)',
       ], 'write').then(() => {}).catch(() => { remote=undefined; throw new Error('تعذر تهيئة تخزين الجلسات؛ تحقق من ربط قاعدة البيانات.'); });
     }
     await ready;
