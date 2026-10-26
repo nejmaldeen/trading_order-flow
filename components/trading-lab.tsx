@@ -91,6 +91,7 @@ import TradeReflectionModal from "@/components/trade-reflection-modal";
 import ChartTradeMarkers from "@/components/chart-trade-markers";
 import type { TradeReflection } from "@/lib/replay";
 import { defaultIndicators, indicatorValues, type IndicatorSettings, type IndicatorKey } from "@/lib/indicators";
+import { calculateCztV2 } from "@/lib/czt-v2-indicator";
 import { cashPreview } from "@/lib/order-preview";
 import { FEE_RATE } from "@/lib/replay";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
@@ -246,6 +247,7 @@ export default function TradingLab() {
   const [showGrid, setShowGrid] = useState(true);
   const [showVolumeProfile, setShowVolumeProfile] = useState(false);
   const [showSessionProfile, setShowSessionProfile] = useState(false);
+  const [showCztV2, setShowCztV2] = useState(false);
   const [showDeepStats, setShowDeepStats] = useState(false);
   const [svpGrouping, setSvpGrouping] = useState<SessionGrouping>("auto");
   const [svpWidthScale, setSvpWidthScale] = useState<number>(1.0);
@@ -329,6 +331,8 @@ export default function TradingLab() {
     try {
       const savedSvp = localStorage.getItem("replay-show-session-profile");
       if (savedSvp !== null) setShowSessionProfile(savedSvp === "true");
+      const savedCztV2 = localStorage.getItem("replay-show-czt-v2");
+      if (savedCztV2 !== null) setShowCztV2(savedCztV2 === "true");
       const savedDeepStats = localStorage.getItem("replay-show-deep-stats");
       if (savedDeepStats !== null) setShowDeepStats(savedDeepStats === "true");
       const savedGrouping = localStorage.getItem("replay-svp-grouping") as SessionGrouping;
@@ -384,6 +388,7 @@ export default function TradingLab() {
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-trade-markers",String(showTradeMarkers));}catch{}},[showTradeMarkers,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-news-markers",String(showNewsMarkers));}catch{}},[showNewsMarkers,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-session-profile",String(showSessionProfile));}catch{}},[showSessionProfile,prefsLoaded]);
+  useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-czt-v2",String(showCztV2));}catch{}},[showCztV2,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-show-deep-stats",String(showDeepStats));}catch{}},[showDeepStats,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-svp-grouping",svpGrouping);}catch{}},[svpGrouping,prefsLoaded]);
   useEffect(()=>{if(prefsLoaded)try{localStorage.setItem("replay-svp-width-scale",String(svpWidthScale));}catch{}},[svpWidthScale,prefsLoaded]);
@@ -444,6 +449,12 @@ export default function TradingLab() {
   const volumeMaSeries = useRef<ISeriesApi<"Line"> | null>(null);
   const vwapSeries = useRef<ISeriesApi<"Line"> | null>(null);
   const overlaySeries = useRef<ISeriesApi<"Line">[]>([]);
+  const cztVahSeries = useRef<ISeriesApi<"Line"> | null>(null);
+  const cztPocSeries = useRef<ISeriesApi<"Line"> | null>(null);
+  const cztValSeries = useRef<ISeriesApi<"Line"> | null>(null);
+  const cztTrendSeries = useRef<ISeriesApi<"Line"> | null>(null);
+  const cztSlSeries = useRef<ISeriesApi<"Line"> | null>(null);
+  const cztTpSeries = useRef<ISeriesApi<"Line"> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const riskLinesRef = useRef<{
@@ -471,6 +482,7 @@ export default function TradingLab() {
   const session = workspace.sessions.find((item) => item.id === workspace.activeSessionId) ?? null;
   candlesRef.current=candles;
   const currentSymbol = session?.symbol ?? symbol;
+  const quote = SYMBOL_INFO[currentSymbol].quote;
   const sessionTrades = workspace.trades.filter((trade) => trade.sessionId === session?.id);
   const displayedTrades = historyScope === "all" ? workspace.trades : sessionTrades;
   const activeTrades = useMemo(() => sessionTrades.filter((trade) => ["pending", "open", "close_pending"].includes(trade.status)), [sessionTrades]);
@@ -624,7 +636,7 @@ export default function TradingLab() {
       if (body.action === "step" && payload.candles?.length) {
         marketClose.current = payload.candles.at(-1)?.close;
         setDataReady(true);
-        setCandles((current) => appendReplayBatch(current, payload.candles!, timeframe));
+        setCandles((current) => appendReplayBatch(current, payload.candles!, timeframe, ["AAPL","NVDA","AMD","GOOGL"].includes(payload.state?.sessions.find(s=>s.id===payload.state?.activeSessionId)?.symbol ?? "")));
       }
       succeeded = true;
       return true;
@@ -733,6 +745,18 @@ export default function TradingLab() {
       "rgba(148, 163, 184, 0.35)", // Bollinger Upper: Soft transparent slate
       "rgba(148, 163, 184, 0.35)", // Bollinger Lower: Soft transparent slate
     ].map((color) => chart.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }));
+    const cztVah = chart.addSeries(LineSeries, { color: "rgba(34, 197, 94, 0.85)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+    const cztPoc = chart.addSeries(LineSeries, { color: "rgba(234, 179, 8, 0.9)", lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+    const cztVal = chart.addSeries(LineSeries, { color: "rgba(239, 68, 68, 0.85)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+    const cztTrend = chart.addSeries(LineSeries, { color: "rgba(148, 163, 184, 0.5)", lineWidth: 1, lineStyle: 3, priceLineVisible: false, lastValueVisible: false });
+    const cztSl = chart.addSeries(LineSeries, { color: "rgba(239, 68, 68, 0.95)", lineWidth: 1, lineStyle: 3, priceLineVisible: false, lastValueVisible: false });
+    const cztTp = chart.addSeries(LineSeries, { color: "rgba(59, 130, 246, 0.95)", lineWidth: 1, lineStyle: 3, priceLineVisible: false, lastValueVisible: false });
+    cztVahSeries.current = cztVah;
+    cztPocSeries.current = cztPoc;
+    cztValSeries.current = cztVal;
+    cztTrendSeries.current = cztTrend;
+    cztSlSeries.current = cztSl;
+    cztTpSeries.current = cztTp;
     const markerPlugin = createSeriesMarkers(candlesRef, []);
     chart.subscribeClick((param) => {
       if (seekReplayModeRef.current && param.time) {
@@ -771,6 +795,12 @@ export default function TradingLab() {
       vwapSeries.current = null;
       markersRef.current = null;
       overlaySeries.current = [];
+      cztVahSeries.current = null;
+      cztPocSeries.current = null;
+      cztValSeries.current = null;
+      cztTrendSeries.current = null;
+      cztSlSeries.current = null;
+      cztTpSeries.current = null;
     };
   }, []);
 
@@ -944,6 +974,42 @@ export default function TradingLab() {
     }
   },[candles,indicators,cleanChart]);
 
+  const cztV2Data = useMemo(() => {
+    if (!showCztV2 || cleanChart || candles.length === 0) return null;
+    return calculateCztV2(candles);
+  }, [showCztV2, cleanChart, candles]);
+
+  useEffect(() => {
+    if (!showCztV2 || cleanChart || !cztV2Data) {
+      cztVahSeries.current?.setData([]);
+      cztPocSeries.current?.setData([]);
+      cztValSeries.current?.setData([]);
+      cztTrendSeries.current?.setData([]);
+      cztSlSeries.current?.setData([]);
+      cztTpSeries.current?.setData([]);
+      return;
+    }
+    cztVahSeries.current?.setData(cztV2Data.vahSeries.map(s => ({ time: s.time as UTCTimestamp, value: s.value })));
+    cztPocSeries.current?.setData(cztV2Data.pocSeries.map(s => ({ time: s.time as UTCTimestamp, value: s.value })));
+    cztValSeries.current?.setData(cztV2Data.valSeries.map(s => ({ time: s.time as UTCTimestamp, value: s.value })));
+    cztTrendSeries.current?.setData(cztV2Data.trendSeries.map(s => ({ time: s.time as UTCTimestamp, value: s.value })));
+    cztSlSeries.current?.setData(cztV2Data.slSeries.map(s => ({ time: s.time as UTCTimestamp, value: s.value })));
+    cztTpSeries.current?.setData(cztV2Data.tpSeries.map(s => ({ time: s.time as UTCTimestamp, value: s.value })));
+  }, [cztV2Data, showCztV2, cleanChart]);
+
+  useEffect(() => {
+    if (!showCztV2 || cleanChart || !candleSeries.current || !cztV2Data || cztV2Data.markers.length === 0) return;
+    const chartMarkers = cztV2Data.markers.map((m) => ({
+      time: m.time as UTCTimestamp,
+      position: m.position,
+      color: m.color,
+      shape: m.shape,
+      text: m.text,
+    }));
+    const plugin = createSeriesMarkers(candleSeries.current, chartMarkers, { autoScale: false });
+    return () => plugin.detach();
+  }, [showCztV2, cleanChart, cztV2Data]);
+
   const isDrafting = Boolean(quickDraft);
   const activeRiskTrade = !isDrafting && selectedTrade && ["pending", "open"].includes(selectedTrade.status) ? selectedTrade : null;
   const selectedSide: "long" | "short" = (quickDraft ? quickDraft.side : (activeRiskTrade?.side ?? side)) || "long";
@@ -976,7 +1042,7 @@ export default function TradingLab() {
   }, 0);
   const availableCash = Math.max(0, equity - tiedMargin);
 
-  const signedCash = (value: number) => `${value >= 0 ? "+" : "−"}${money(Math.abs(value))} USDT`;
+  const signedCash = (value: number) => `${value >= 0 ? "+" : "−"}${money(Math.abs(value))} ${quote}`;
   const stopDistancePct = expectedEntry > 0 && previewStop !== null ? (Math.abs(expectedEntry - previewStop) / expectedEntry) * 100 : null;
   const targetDistancePct = expectedEntry > 0 && previewTarget !== null ? (Math.abs(previewTarget - expectedEntry) / expectedEntry) * 100 : null;
   const stopGross = stopDistancePct !== null ? (orderAmount * stopDistancePct) / 100 : null;
@@ -1273,9 +1339,15 @@ export default function TradingLab() {
       ) {
         return;
       }
+      const isInstitutional = nextSym === "PAXGUSDT";
+      if (isInstitutional && !isOfflineMode) {
+        setIsOfflineMode(true);
+      }
+      const effectiveOffline = !["AAPL","NVDA","AMD","GOOGL"].includes(nextSym) && (isOfflineMode || isInstitutional);
+      if (["AAPL","NVDA","AMD","GOOGL"].includes(nextSym)) setIsOfflineMode(false);
       let startTime: number;
       if (forceLatest) {
-        if (isOfflineMode) {
+        if (effectiveOffline) {
           const bounds = offlineSummary?.symbols[nextSym]?.timeframes[timeframe]
             ?? offlineSummary?.symbols[nextSym]?.timeframes["15m"];
           startTime = bounds ? bounds.end : Math.floor(Date.now() / 60_000) * 60_000 - 60_000;
@@ -1289,7 +1361,7 @@ export default function TradingLab() {
         startTime = Number.isFinite(rawStartTime)
           ? Math.floor(rawStartTime / 60_000) * 60_000
           : Date.now() - 7 * 86400000;
-        if (isOfflineMode) {
+        if (effectiveOffline) {
           const bounds = offlineSummary?.symbols[nextSym]?.timeframes[timeframe]
             ?? offlineSummary?.symbols[nextSym]?.timeframes["15m"];
           if (bounds) {
@@ -1306,7 +1378,7 @@ export default function TradingLab() {
       }
       setPlaying(false);
       playingRef.current = false;
-      const ok = await act({ action: "start", symbol: nextSym, startTime, confirmReplace });
+      const ok = await act({ action: "start", symbol: nextSym, startTime, confirmReplace, latest: forceLatest });
       if (ok) {
         setQuickDraft(null);
         setDrawnPrice(null);
@@ -1598,7 +1670,7 @@ export default function TradingLab() {
           >
             <span className="coin-icon">{SYMBOL_INFO[currentSymbol]?.icon ?? "🪙"}</span>
             <span>
-              <b>{SYMBOL_INFO[currentSymbol]?.base ?? currentSymbol.slice(0, -4)} <i>/ USDT</i></b>
+              <b>{SYMBOL_INFO[currentSymbol]?.base ?? currentSymbol.slice(0, -4)} <i>/ {SYMBOL_INFO[currentSymbol].quote}</i></b>
               <small>{SYMBOL_INFO[currentSymbol]?.arabicName ?? currentSymbol}</small>
             </span>
             <ChevronDown size={13} />
@@ -1635,7 +1707,7 @@ export default function TradingLab() {
                     <span className="coin-icon">{info.icon}</span>
                     <div className="pair-item-info">
                       <div className="pair-item-title">
-                        <span><b>{info.base}</b>/USDT</span>
+                        <span><b>{info.base}</b>/{info.quote}</span>
                         <span className="pair-badge" style={{ color: info.badgeColor, borderColor: `${info.badgeColor}55` }}>{info.arabicName}</span>
                       </div>
                       <span className="pair-item-sub">{info.description}</span>
@@ -1701,7 +1773,7 @@ export default function TradingLab() {
           >
             <div className="summary-text">
               <small>حساب تدريبي · تعديل</small>
-              <b dir="ltr">{money(equity)} USDT</b>
+              <b dir="ltr">{money(equity)} {quote}</b>
             </div>
             <button
               type="button"
@@ -1764,7 +1836,7 @@ export default function TradingLab() {
       {settingsOpen && <section className="display-settings" aria-label="إعدادات العرض"><header><strong>إعدادات العرض</strong><button onClick={()=>setSettingsOpen(false)} aria-label="إغلاق الإعدادات"><X size={18}/></button></header><label><input type="checkbox" checked={showGrid} onChange={e=>setShowGrid(e.target.checked)}/> شبكة الأسعار</label><label><input type="checkbox" checked={showVolume} onChange={e=>setShowVolume(e.target.checked)}/> أحجام التداول</label><label><input type="checkbox" checked={layout.orderOpen} onChange={e=>setLayout(v=>({...v,orderOpen:e.target.checked}))}/> لوحة الأوامر</label><label><input type="checkbox" checked={layout.historyOpen} onChange={e=>setLayout(v=>({...v,historyOpen:e.target.checked}))}/> سجل الصفقات</label><button onClick={()=>{setLayout({orderOpen:false,historyOpen:true,width:300,height:220});setShowGrid(true);setShowVolume(true);resetView();}}>استعادة العرض الافتراضي</button><button style={{marginTop: "8px", background: "#1b2a3a", borderColor: "#35506e", color: "#a5cdf7"}} onClick={()=>{setSettingsOpen(false); setIntegrationsOpen(true);}}><KeyRound size={14} style={{display: "inline-block", verticalAlign: "middle", marginLeft: "6px"}}/> الربط والتكامل (API Keys)</button></section>}
       {helpOpen && <section className="help-panel" aria-label="طريقة الاستخدام"><button onClick={()=>setHelpOpen(false)}>إغلاق الشرح ×</button><h2>تدرّب خطوة بخطوة</h2><p>اختر الأصل والتاريخ ثم «جلسة جديدة». تشغيل يستأنف الجلسة الحالية، والشمعة التالية تتقدم بمقدار إطار الشارت المختار مع معالجة دقائقها بالتسلسل.</p><p>حرّك الشارت بالسحب، وكبّره بعجلة الفأرة أو اللمس بإصبعين. اسحب خط الوقف أو الهدف، أو أدخل السعر واضغط تحديث. اسحب الفاصل بجانب الأوامر أو فوق السجل لتغيير حجمهما.</p><p>محدد: شراء بالسعر المحدد أو أقل. وقف شراء: تفعيل فوق السعر الحالي ثم شراء سوق؛ يختلف عن وقف الخسارة.</p><p>الرسوم 0.15% لكل جهة، والانزلاق 0.02% مع احترام سعر الأمر المحدد. فجوة تجعل الوقف أو الهدف غير صالح تُلغي الأمر. عند دخول داخل الدقيقة نحتسب الوقف أولًا ولا نحتسب ربح هدف تلك الدقيقة لعدم معرفة ترتيب الحركة. R = صافي النتيجة ÷ المخاطرة السعرية الأصلية.</p><p>VWAP تقريبي من الشموع المعروضة، واليوم بتوقيت UTC؛ يتغير تقديره حسب الإطار.</p></section>}
       <div className="workspace-grid">
-        <nav className="toolrail" aria-label="أدوات الرسم والتحليل"><button className={!drawing ? "rail-active" : ""} onClick={()=>setDrawing(false)} title="المؤشر والتحريك"><Crosshair size={18}/></button><button className={showSessionProfile ? "rail-active" : ""} onClick={()=>setShowSessionProfile(!showSessionProfile)} title="بروفايل سيولة الجلسات اليومية (Session Volume Profile - POC & Value Area)"><Layers size={18}/></button><button className={showVolumeProfile ? "rail-active" : ""} onClick={()=>setShowVolumeProfile(!showVolumeProfile)} title="مناطق الفوليوم وتمركز السيولة (Order Flow Volume Profile)"><BarChart3 size={18}/></button><button onClick={()=>setShowVwap(!showVwap)} className={showVwap ? "rail-active" : ""} title="VWAP تقريبي"><Activity size={18}/></button><button onClick={()=>setIntegrationsOpen(true)} title="مفاتيح الربط والتكامل"><KeyRound size={18}/></button><button onClick={()=>setHelpOpen(!helpOpen)} title="المساعدة"><CircleHelp size={18}/></button></nav>
+        <nav className="toolrail" aria-label="أدوات الرسم والتحليل"><button className={!drawing ? "rail-active" : ""} onClick={()=>setDrawing(false)} title="المؤشر والتحريك"><Crosshair size={18}/></button><button className={showCztV2 ? "rail-active" : ""} onClick={()=>setShowCztV2(!showCztV2)} title="مؤشر CZT المؤسسي الرئيسي (V2 Master - VAH/POC/VAL & Signals)"><Zap size={18} className={showCztV2 ? "text-amber-400" : ""}/></button><button className={showSessionProfile ? "rail-active" : ""} onClick={()=>setShowSessionProfile(!showSessionProfile)} title="بروفايل سيولة الجلسات اليومية (Session Volume Profile - POC & Value Area)"><Layers size={18}/></button><button className={showVolumeProfile ? "rail-active" : ""} onClick={()=>setShowVolumeProfile(!showVolumeProfile)} title="مناطق الفوليوم وتمركز السيولة (Order Flow Volume Profile)"><BarChart3 size={18}/></button><button onClick={()=>setShowVwap(!showVwap)} className={showVwap ? "rail-active" : ""} title="VWAP تقريبي"><Activity size={18}/></button><button onClick={()=>setIntegrationsOpen(true)} title="مفاتيح الربط والتكامل"><KeyRound size={18}/></button><button onClick={()=>setHelpOpen(!helpOpen)} title="المساعدة"><CircleHelp size={18}/></button></nav>
 
         <section className="main-stage" ref={stageRef}>
           <IndicatorLibrary
@@ -1772,6 +1844,8 @@ export default function TradingLab() {
             onClose={() => setIndicatorsOpen(false)}
             settings={indicators}
             onChange={setIndicators}
+            cztV2={showCztV2}
+            onCztV2={setShowCztV2}
             vwap={showVwap}
             onVwap={setShowVwap}
             vwapPeriod={vwapPeriod}
@@ -1811,7 +1885,7 @@ export default function TradingLab() {
               <div className="symbol-meta">
                 <span className="market-icon">{SYMBOL_INFO[currentSymbol]?.icon ?? "B"}</span>
                 <div>
-                  <strong>{SYMBOL_INFO[currentSymbol]?.base ?? currentSymbol.slice(0, -4)}/USDT</strong>
+                  <strong>{SYMBOL_INFO[currentSymbol]?.base ?? currentSymbol.slice(0, -4)}/{SYMBOL_INFO[currentSymbol].quote}</strong>
                   <small>{SYMBOL_INFO[currentSymbol]?.arabicName}</small>
                 </div>
               </div>
@@ -1834,6 +1908,17 @@ export default function TradingLab() {
                   Bookmap
                 </button>
               </div>
+
+              {/* CZT V2 Institutional Master Quick Toggle */}
+              <button
+                type="button"
+                className={`svp-mode-btn ${showCztV2 ? "active" : ""}`}
+                onClick={() => setShowCztV2((v) => !v)}
+                title="تفعيل/إلغاء مؤشر CZT المؤسسي الرئيسي (V2 Master - VAH/POC/VAL & Signals)"
+              >
+                <Zap size={12} className={showCztV2 ? "text-amber-400" : ""} />
+                <span>CZT V2 المؤسسي</span>
+              </button>
 
               {/* Session Volume Profile (SVP) Quick Toggle */}
               <button
@@ -1946,7 +2031,7 @@ export default function TradingLab() {
               >
                 <span className="live-dot" />
                 <Zap size={13} />
-                <span>{isLiveSession ? "الجلسة اللحظية (مباشر)" : "أحدث شمعة (الآن)"}</span>
+                <span>{isLiveSession ? "الجلسة اللحظية (مباشر)" : "أحدث شمعة متاحة"}</span>
               </button>
             </div>
 
@@ -2232,7 +2317,7 @@ export default function TradingLab() {
                   <span className={`hud-draft-side ${quickDraft.side}`}>
                     {quickDraft.side === "long" ? "📈 مسودة شراء L" : "📉 مسودة بيع S"}
                   </span>
-                  <span className="hud-draft-amount">{money(quickDraft.amount)} USDT</span>
+                  <span className="hud-draft-amount">{money(quickDraft.amount)} {quote}</span>
                   <button
                     type="button"
                     className="hud-draft-confirm-btn"
@@ -2325,7 +2410,7 @@ export default function TradingLab() {
                       className="hud-close-all-btn"
                       disabled={loading}
                       onClick={() => {
-                        if (window.confirm("هل تريد إغلاق جميع الصفقات المفتوحة فوراً؟")) {
+                        if (window.confirm("هل تريد إرسال إغلاق جميع الصفقات المفتوحة عند الافتتاح التالي؟")) {
                           void act({ action: "close", all: true });
                         }
                       }}
@@ -2338,10 +2423,52 @@ export default function TradingLab() {
               )}
             </div>
             <div className={`chart-host ${drawing ? "drawing-mode" : ""} ${selectReplayPoint ? "select-replay-mode" : ""}`} ref={chartHost} onWheel={()=>{followChart.current=false;}}>
+              {showCztV2 && cztV2Data?.latest && (
+                <div
+                  className="czt-v2-hud"
+                  style={{
+                    position: "absolute",
+                    top: 12,
+                    left: 12,
+                    zIndex: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    background: "rgba(15, 23, 42, 0.88)",
+                    backdropFilter: "blur(8px)",
+                    border: "1px solid rgba(59, 130, 246, 0.35)",
+                    borderRadius: "8px",
+                    padding: "5px 12px",
+                    fontSize: "11px",
+                    color: "#e2e8f0",
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.6)",
+                    pointerEvents: "none",
+                  }}
+                >
+                  <span style={{ color: "#38bdf8", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+                    <Zap size={13} className="text-amber-400" /> CZT V2 Master
+                  </span>
+                  <span style={{ color: "#475569" }}>|</span>
+                  <span style={{ color: "#22c55e", fontWeight: 600 }}>VAH: {cztV2Data.latest.vah.toFixed(2)}</span>
+                  <span style={{ color: "#eab308", fontWeight: 600 }}>POC: {cztV2Data.latest.poc.toFixed(2)}</span>
+                  <span style={{ color: "#ef4444", fontWeight: 600 }}>VAL: {cztV2Data.latest.val.toFixed(2)}</span>
+                  <span style={{ color: "#94a3b8" }}>EMA100: {cztV2Data.latest.trendEma.toFixed(2)}</span>
+                  {cztV2Data.latest.isPrime && (
+                    <span style={{ background: "#22c55e", color: "#000", fontWeight: 800, padding: "2px 7px", borderRadius: "4px", fontSize: "10px" }}>
+                      ★ PRIME BUY 1.5x
+                    </span>
+                  )}
+                  {cztV2Data.latest.isRebound && (
+                    <span style={{ background: "#3b82f6", color: "#fff", fontWeight: 800, padding: "2px 7px", borderRadius: "4px", fontSize: "10px" }}>
+                      ⚡ VAL REBOUND
+                    </span>
+                  )}
+                </div>
+              )}
               {floatingReplay&&<FloatingReplay playing={playing} disabled={!session||!dataReady} speed={replaySpeed} time={fmtDate(session?.cursorTime??null)} selecting={selectReplayPoint} onToggle={()=>{if(playing)stopPlaying();else{playingRef.current=true;setPlaying(true);}}} onStep={()=>{stopPlaying();void advanceStep(1,"bar");}} onSpeed={setReplaySpeed} onClose={()=>setFloatingReplay(false)} onLatest={()=>{followChart.current=true;chartRef.current?.timeScale().scrollToPosition(32,false);}} onSelect={()=>{stopPlaying();setSelectReplayPoint(v=>!v);}}/>}
               {!cleanChart && <InstitutionalChartOverlay chart={chartRef} series={candleSeries} candles={candles} config={institutionalConfig} currentPrice={latest?.close ?? 0}/>}
               <VolumeProfileOverlay chart={chartRef} series={candleSeries} candles={candles} visible={!cleanChart && showVolumeProfile} buyColor={chartTheme.upColor} sellColor={chartTheme.downColor}/>
-              <SessionProfileOverlay
+              <SessionProfileOverlay timezone={["AAPL","NVDA","AMD","GOOGL"].includes(currentSymbol)?"America/New_York":"UTC"}
                 chart={chartRef}
                 series={candleSeries}
                 candles={candles}
@@ -2433,8 +2560,8 @@ export default function TradingLab() {
           <section className="replay-panel">
             <MacroPanel key={session?.id} data={macro} cursor={session?.cursorTime??0} sessionId={session?.id} inspectRequest={inspectNews} onEvents={setArchiveEvents}/>
             <div className="replay-title"><strong>إعادة تشغيل السوق</strong><span className="replay-status" role="status">{loading ? "جار التحميل…" : !dataReady ? "بانتظار البيانات" : playing ? "قيد التشغيل" : "متوقف مؤقتًا"}</span><b className="cursor-time">{fmtDate(session?.cursorTime ?? null)}</b></div>
-            <div className="replay-controls"><button className="play-button" onClick={()=>{if(playing)stopPlaying();else {playingRef.current=true;setPlaying(true);}}} disabled={!playing && (!session || !dataReady)} aria-label={playing?"إيقاف مؤقت":"تشغيل Replay"}>{playing?<Pause size={16}/>:<Play size={16}/>} {playing?"إيقاف مؤقت":"تشغيل"}</button><button className="step-button" onClick={()=>{stopPlaying();void advanceStep(1,"bar");}} disabled={loading || !session || !dataReady} title="تقدم شمعة واحدة حسب الفريم المختار"><SkipForward size={16}/> الشمعة التالية</button><label>السرعة <select aria-label="سرعة التشغيل" value={replaySpeed} onChange={e=>setReplaySpeed(Number(e.target.value))}>{[1,2,4,8,16,32,64].map(v=><option key={v} value={v}>{v}×</option>)}</select></label><button className="seek-chart" disabled={!session||!dataReady} aria-pressed={selectReplayPoint} onClick={()=>{stopPlaying();setSelectReplayPoint(v=>!v);}}>{selectReplayPoint?"اختر شمعة من الشارت…":"ابدأ من الشارت"}</button><button type="button" className={`replay-latest-btn ${isLiveSession ? "active" : ""}`} disabled={loading} onClick={() => void jumpToLatestSession()} title="بدء الجلسة فوراً عند أحدث شمعة حالية في السوق بدون تحديد التاريخ"><Zap size={15}/> أحدث شمعة (الآن)</button><div className="replay-ticket"><label>مبلغ الدخول <input aria-label="مبلغ الدخول السريع USDT" type="number" min="1" step="0.01" value={notional} onChange={e=>setNotional(e.target.value)}/><span>USDT</span></label><button className="quick-long" aria-label="معاينة شراء" title="معاينة شراء قبل التأكيد" disabled={!dataReady||!session||availableCash<10} onClick={()=>void quickOrder("long")}><ArrowUpRight size={20}/> شراء</button>{quickDraft&&<><button className="quick-long" disabled={confirming} onClick={()=>void submitLong()}>{confirming?"جار تأكيد الدخول…":"تأكيد الدخول"}</button><button disabled={confirming} onClick={cancelDraft}>إلغاء المعاينة</button></>}{selectedTrade?.status==="pending"&&<button disabled={loading} onClick={()=>void act({action:"cancel", tradeId: selectedTrade.id})}>إلغاء الأمر</button>}<button className="ticket-open" onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:!v.orderOpen}));}}>{activeTrades.length > 0 ? `الصفقات (${activeTrades.length})` : 'إعداد الصفقة'}</button>{selectedTrade?.status==='open'&&<button disabled={loading} onClick={()=>void act({action:"close", tradeId: selectedTrade.id})}>إغلاق الصفقة</button>}{selectedTrade?.status==='open' && (<><button type="button" className="ticket-scale-btn" disabled={loading || availableCash < 5} onClick={() => { setScaleInTrade(selectedTrade); setScaleInAmount(String(Math.min(selectedTrade.notional, Math.max(50, Math.floor(availableCash))))); }} title="تعزيز الصفقة وزيادة اللوت">+ تعزيز</button><button type="button" className="ticket-tp-quick-btn" onClick={() => void handleAddPartialTp(20)} title="إضافة هدف لسحب 20% مباشرة على الشارت">+20% ربح</button><button type="button" className="ticket-tp-quick-btn" onClick={() => void handleAddPartialTp(50)} title="إضافة هدف لسحب 50% مباشرة على الشارت">+50% ربح</button><button type="button" className="ticket-tp-btn" onClick={() => setTpModalOpen(true)} title="أداة سحب الأرباح التكتيكية"><TrendingUp size={15} /> 🎯 سحب الأرباح {(selectedTrade.takeProfitLevels?.filter(x => !x.filled).length ?? 0) > 0 && (<b className="tp-count-pill">{selectedTrade.takeProfitLevels!.filter(x => !x.filled).length}</b>)}</button></>)}{activeTrades.length > 1 && (<button type="button" className="ticket-close-all-btn" disabled={loading} onClick={() => { if (window.confirm("هل تريد إغلاق جميع الصفقات المفتوحة فوراً؟")) { void act({ action: "close", all: true }); } }}>إغلاق الكل ({activeTrades.length})</button>)}<button onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:true}));setStatsOpen(true);}}>الأداء</button></div></div>
-            <details className="replay-session"><summary>التاريخ · جلسة جديدة</summary><div className="replay-date"><div className="replay-quick-now-banner"><button type="button" className="btn-jump-now" disabled={loading} onClick={() => void jumpToLatestSession()} title="تخطي التاريخ والوقت والبدء فوراً من أحدث شمعة في السوق بضغطة زر واحدة"><Zap size={14} /> <strong>الانتقال فوراً لأحدث شمعة حالية (الآن)</strong></button><span className="quick-now-desc">تجاوز اختيار التاريخ والوقت يدوياً والذهاب لآخر شمعة مباشرة</span></div><div className="replay-date-or"><span>أو حدد تاريخًا ووقتًا يدويًا للبداية:</span></div><label className="date-input-wrap"><small>تاريخ الجلسة الجديدة</small><input type="date" aria-label="تاريخ بداية Replay" value={startDate.slice(0,10)} max={dateTimeInputValue(Date.now()).slice(0,10)} onChange={e=>updateStartDatePart("date",e.target.value)}/></label><label className="date-input-wrap time-input-wrap"><small>الوقت المحلي</small><input type="time" aria-label="وقت بداية Replay" step={60} value={startDate.slice(11,16)} onChange={e=>updateStartDatePart("time",e.target.value)}/></label><button onClick={()=>void startReplay()} disabled={loading}>جلسة جديدة بالتاريخ المختار · {SYMBOL_INFO[symbol]?.base ?? symbol.slice(0,-4)}</button></div></details>
+            <div className="replay-controls"><button className="play-button" onClick={()=>{if(playing)stopPlaying();else {playingRef.current=true;setPlaying(true);}}} disabled={!playing && (!session || !dataReady)} aria-label={playing?"إيقاف مؤقت":"تشغيل Replay"}>{playing?<Pause size={16}/>:<Play size={16}/>} {playing?"إيقاف مؤقت":"تشغيل"}</button><button className="step-button" onClick={()=>{stopPlaying();void advanceStep(1,"bar");}} disabled={loading || !session || !dataReady} title="تقدم شمعة واحدة حسب الفريم المختار"><SkipForward size={16}/> الشمعة التالية</button><label>السرعة <select aria-label="سرعة التشغيل" value={replaySpeed} onChange={e=>setReplaySpeed(Number(e.target.value))}>{[1,2,4,8,16,32,64].map(v=><option key={v} value={v}>{v}×</option>)}</select></label><button className="seek-chart" disabled={!session||!dataReady} aria-pressed={selectReplayPoint} onClick={()=>{stopPlaying();setSelectReplayPoint(v=>!v);}}>{selectReplayPoint?"اختر شمعة من الشارت…":"ابدأ من الشارت"}</button><button type="button" className={`replay-latest-btn ${isLiveSession ? "active" : ""}`} disabled={loading} onClick={() => void jumpToLatestSession()} title="بدء الجلسة فوراً عند أحدث شمعة حالية في السوق بدون تحديد التاريخ"><Zap size={15}/> أحدث شمعة متاحة</button><div className="replay-ticket"><label>مبلغ الدخول <input aria-label="مبلغ الدخول السريع" type="number" min="1" step="0.01" value={notional} onChange={e=>setNotional(e.target.value)}/><span>{quote}</span></label><button className="quick-long" aria-label="معاينة شراء" title="معاينة شراء قبل التأكيد" disabled={!dataReady||!session||availableCash<10} onClick={()=>void quickOrder("long")}><ArrowUpRight size={20}/> شراء</button>{quickDraft&&<><button className="quick-long" disabled={confirming} onClick={()=>void submitLong()}>{confirming?"جار تأكيد الدخول…":"تأكيد الدخول"}</button><button disabled={confirming} onClick={cancelDraft}>إلغاء المعاينة</button></>}{selectedTrade?.status==="pending"&&<button disabled={loading} onClick={()=>void act({action:"cancel", tradeId: selectedTrade.id})}>إلغاء الأمر</button>}<button className="ticket-open" onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:!v.orderOpen}));}}>{activeTrades.length > 0 ? `الصفقات (${activeTrades.length})` : 'إعداد الصفقة'}</button>{selectedTrade?.status==='open'&&<button disabled={loading} onClick={()=>void act({action:"close", tradeId: selectedTrade.id})}>إغلاق الصفقة</button>}{selectedTrade?.status==='open' && (<><button type="button" className="ticket-scale-btn" disabled={loading || availableCash < 5} onClick={() => { setScaleInTrade(selectedTrade); setScaleInAmount(String(Math.min(selectedTrade.notional, Math.max(50, Math.floor(availableCash))))); }} title="تعزيز الصفقة وزيادة اللوت">+ تعزيز</button><button type="button" className="ticket-tp-quick-btn" onClick={() => void handleAddPartialTp(20)} title="إضافة هدف لسحب 20% مباشرة على الشارت">+20% ربح</button><button type="button" className="ticket-tp-quick-btn" onClick={() => void handleAddPartialTp(50)} title="إضافة هدف لسحب 50% مباشرة على الشارت">+50% ربح</button><button type="button" className="ticket-tp-btn" onClick={() => setTpModalOpen(true)} title="أداة سحب الأرباح التكتيكية"><TrendingUp size={15} /> 🎯 سحب الأرباح {(selectedTrade.takeProfitLevels?.filter(x => !x.filled).length ?? 0) > 0 && (<b className="tp-count-pill">{selectedTrade.takeProfitLevels!.filter(x => !x.filled).length}</b>)}</button></>)}{activeTrades.length > 1 && (<button type="button" className="ticket-close-all-btn" disabled={loading} onClick={() => { if (window.confirm("هل تريد إرسال إغلاق جميع الصفقات المفتوحة عند الافتتاح التالي؟")) { void act({ action: "close", all: true }); } }}>إغلاق الكل ({activeTrades.length})</button>)}<button onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();setLayout(v=>({...v,orderOpen:true}));setStatsOpen(true);}}>الأداء</button></div></div>
+            <details className="replay-session"><summary>التاريخ · جلسة جديدة</summary><div className="replay-date"><div className="replay-quick-now-banner"><button type="button" className="btn-jump-now" disabled={loading} onClick={() => void jumpToLatestSession()} title="تخطي التاريخ والوقت والبدء فوراً من أحدث شمعة في السوق بضغطة زر واحدة"><Zap size={14} /> <strong>الانتقال فوراً لأحدث شمعة متاحة</strong></button><span className="quick-now-desc">تجاوز اختيار التاريخ والوقت يدوياً والذهاب لآخر شمعة مباشرة</span></div><div className="replay-date-or"><span>أو حدد تاريخًا ووقتًا يدويًا للبداية:</span></div><label className="date-input-wrap"><small>تاريخ الجلسة الجديدة</small><input type="date" aria-label="تاريخ بداية Replay" value={startDate.slice(0,10)} max={dateTimeInputValue(Date.now()).slice(0,10)} onChange={e=>updateStartDatePart("date",e.target.value)}/></label><label className="date-input-wrap time-input-wrap"><small>الوقت المحلي</small><input type="time" aria-label="وقت بداية Replay" step={60} value={startDate.slice(11,16)} onChange={e=>updateStartDatePart("time",e.target.value)}/></label><button onClick={()=>void startReplay()} disabled={loading}>جلسة جديدة بالتاريخ المختار · {SYMBOL_INFO[symbol]?.base ?? symbol.slice(0,-4)}</button></div></details>
             <details className="replay-guide"><summary>كيف تعمل المحاكاة؟</summary><p className="replay-explanation">{replaySpeed>=16 ? "تسريع الوقت: تُتجاوز فرص القرار بين الدقائق. " : ""}الخطوة = شمعة حسب الفريم؛ التشغيل المتواصل بالدقائق. شمعة {periods.find(p=>p.key===timeframe)?.label} تتحدّث حتى يكتمل إطارها.</p></details>
             {error && <div className="replay-error" role="alert"><span>{error}</span><button disabled={loading} onClick={()=>void load(true)}>إعادة تحميل الجلسة</button></div>}
           </section>
@@ -2486,14 +2613,14 @@ export default function TradingLab() {
                   </div>
                   <div className="summary-col">
                     <span className="summary-label">حجم الصفقة الحالي</span>
-                    <b dir="ltr">{money(scaleInTrade.notional)} USDT</b>
+                    <b dir="ltr">{money(scaleInTrade.notional)} {quote}</b>
                   </div>
                 </div>
 
                 <div className="scale-input-section">
                   <label htmlFor="scale-amount-input">
-                    <span>مبلغ التعزيز الإضافي (USDT)</span>
-                    <small>الرصيد المتاح: <b dir="ltr">{money(availableCash)} USDT</b></small>
+                    <span>مبلغ التعزيز الإضافي ({quote})</span>
+                    <small>الرصيد المتاح: <b dir="ltr">{money(availableCash)} {quote}</b></small>
                   </label>
                   <div className="scale-input-wrap">
                     <input
@@ -2506,7 +2633,7 @@ export default function TradingLab() {
                       onChange={(e) => setScaleInAmount(e.target.value)}
                       autoFocus
                     />
-                    <span className="unit">USDT</span>
+                    <span className="unit">{quote}</span>
                   </div>
 
                   <div className="scale-presets">
@@ -2573,14 +2700,14 @@ export default function TradingLab() {
                       </div>
                       <div className="sim-row">
                         <span>إجمالي حجم الصفقة بعد التعزيز:</span>
-                        <b dir="ltr">{money(totalNotional)} USDT</b>
+                        <b dir="ltr">{money(totalNotional)} {quote}</b>
                       </div>
                       <div className="sim-row">
                         <span>رسوم التنفيذ المقدرة (0.15%):</span>
-                        <span dir="ltr">~{money(fee)} USDT</span>
+                        <span dir="ltr">~{money(fee)} {quote}</span>
                       </div>
                       {isExceeding && (
-                        <p className="scale-error-msg">⚠️ المبلغ يتجاوز الرصيد المتاح مع الرسوم ({money(availableCash)} USDT).</p>
+                        <p className="scale-error-msg">⚠️ المبلغ يتجاوز الرصيد المتاح مع الرسوم ({money(availableCash)} {quote}).</p>
                       )}
 
                       <div className="modal-actions-row">
@@ -2606,7 +2733,7 @@ export default function TradingLab() {
                             }
                           }}
                         >
-                          {loading ? "جار التنفيذ…" : `تأكيد التعزيز (+${money(added)} USDT)`}
+                          {loading ? "جار التنفيذ…" : `تأكيد التعزيز (+${money(added)} ${quote})`}
                         </button>
                       </div>
                     </div>
@@ -2617,7 +2744,7 @@ export default function TradingLab() {
           )}
 
           <div className="history-resizer" role="separator" tabIndex={0} aria-label="تغيير ارتفاع السجل" aria-orientation="horizontal" aria-valuemin={100} aria-valuemax={300} aria-valuenow={layout.height} onPointerDown={e=>resizeStart(e,"history")} onPointerMove={resizeMove} onPointerUp={()=>{resizeRef.current=null;}} onPointerCancel={()=>{resizeRef.current=null;}} onKeyDown={e=>{if(e.key==="ArrowUp"||e.key==="ArrowDown") {e.preventDefault();setLayout(v=>({...v,height:Math.max(100,Math.min(300,v.height+(e.key==="ArrowUp"?20:-20)))}));}}}/>
-          <section className="history-panel"><div className="history-head"><div className="history-tabs"><button onClick={() => { setTab("trades"); setHistoryScope("current"); }} className={tab === "trades" && historyScope === "current" ? "active" : ""}>صفقات الجلسة <span>{sessionTrades.length}</span></button><button onClick={() => { setTab("trades"); setHistoryScope("all"); }} className={tab === "trades" && historyScope === "all" ? "active" : ""}>كل الصفقات <span>{workspace.trades.length}</span></button><button onClick={() => setTab("journal")} className={tab === "journal" ? "active" : ""}><BookOpenCheck size={14} /> دفتر التداول والتحليل</button></div><div style={{ display: "flex", alignItems: "center", gap: "8px" }}>{workspace.sessions.length > 1 && (<select className="session-selector" value={workspace.activeSessionId ?? ""} onChange={(e) => void selectSession(e.target.value)} style={{ background: "#162330", color: "#b4d0ef", border: "1px solid #314a66", borderRadius: "4px", fontSize: "11px", padding: "3px 6px", cursor: "pointer", maxWidth: "240px" }} title="التنقل إلى جلسة سابقة">{workspace.sessions.map((s, idx) => { const count = workspace.trades.filter(t => t.sessionId === s.id).length; return (<option key={s.id} value={s.id}>جلسة {workspace.sessions.length - idx} ({s.symbol.slice(0, -4)} · {new Date(s.startTime).toLocaleDateString("ar")} · {count} صفقات)</option>); })}</select>)}<button className="export-button" onClick={()=>{const blob=new Blob([JSON.stringify(workspace,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const link=document.createElement("a");link.href=url;link.download="replay-journal.json";link.click();URL.revokeObjectURL(url);}}>تنزيل السجل</button>{displayedTrades.length > 0 && (<button className="export-button" style={{ background: "#261618", borderColor: "#4d2327", color: "#fca5a5" }} onClick={() => { const scopeLabel = historyScope === "all" ? "جميع الصفقات في كل الجلسات" : "صفقات هذه الجلسة"; if (window.confirm(`هل أنت متأكد من مسح ${scopeLabel}؟ لا يمكن التراجع عن هذا الإجراء.`)) { void act({ action: "clearTrades", scope: historyScope }); } }} title="مسح الصفقات"><Trash2 size={12} style={{ display: "inline-block", verticalAlign: "middle", marginLeft: "4px" }} />{historyScope === "all" ? "مسح كل الصفقات" : "مسح صفقات الجلسة"}</button>)}</div></div>{tab === "trades" ? <div className="table-wrap"><table><thead><tr><th>الأصل</th><th>النوع</th><th>الدخول</th><th>الخروج</th><th>مبلغ الدخول</th><th>ربح السعر (إجمالي)</th><th>الرسوم المخصومة</th><th>الصافي النهائي</th><th>التقييم</th><th>الحالة</th><th>الوقت</th><th>حذف</th></tr></thead><tbody>{displayedTrades.length ? displayedTrades.slice().reverse().map((trade) => { const totalFees = (trade.entryFee ?? 0) + (trade.exitFee ?? 0); const grossPnl = trade.status === "closed" ? trade.realizedPnl + totalFees : 0; const pricePct = trade.entryPrice && trade.exitPrice && trade.entryPrice > 0 ? ((trade.exitPrice - trade.entryPrice) / trade.entryPrice) * 100 * (trade.side === "short" ? -1 : 1) : 0; return (<tr key={trade.id}><td><span className="tiny-coin">{SYMBOL_INFO[trade.symbol as SymbolName]?.icon ?? "🪙"}</span>{trade.symbol.slice(0, -4)}/USDT</td><td><span className={trade.side==="short"?"negative":"positive"}>{trade.side==="short"?"بيع":"شراء"} {orderLabels[trade.orderType ?? "market"]}</span></td><td>{trade.entryPrice ? price(trade.entryPrice) : trade.orderPrice ? price(trade.orderPrice) : "الافتتاح التالي"}</td><td>{trade.exitPrice ? price(trade.exitPrice) : "—"}</td><td>{money(trade.notional)} USDT</td><td className={grossPnl >= 0 ? "positive" : "negative"} title={`حركة السعر الصافية بدون رسوم: ${pricePct >= 0 ? "+" : ""}${pricePct.toFixed(2)}%`}>{trade.status === "closed" ? `${grossPnl >= 0 ? "+" : ""}${money(grossPnl)} USDT (${pricePct >= 0 ? "+" : ""}${pricePct.toFixed(2)}%)` : "—"}</td><td style={{ color: "#f87171" }} title={`رسوم الدخول: ${money(trade.entryFee ?? 0)}$ · رسوم الخروج: ${money(trade.exitFee ?? 0)}$`}>{trade.status === "closed" ? (totalFees > 0 ? `-${money(totalFees)} USDT` : "0.00 USDT") : "—"}</td><td className={trade.realizedPnl >= 0 ? "positive" : "negative"} style={{ fontWeight: "bold" }} title="الصافي المحقق المضاف للمحفظة بعد خصم الرسوم">{trade.status === "closed" ? `${trade.realizedPnl >= 0 ? "+" : ""}${money(trade.realizedPnl)} USDT` : "—"}</td><td><button onClick={()=>setReflectionModalTrade(trade)} style={{cursor:"pointer",border:"1px solid #374b60",background:"#162332",color:"#b5d4f4",borderRadius:"4px",padding:"2px 6px",fontSize:"10px"}} title="تحليل الدخول">{trade.reflection?.setupGrade ?? "تقييم"} {trade.reflection?.audioNote ? "🎙️" : ""}</button></td><td><span className={`status-pill ${trade.status}`}>{trade.status === "pending" ? "معلق" : trade.status === "open" ? "مفتوح" : trade.status === "close_pending" ? "إغلاق معلّق" : trade.status === "closed" ? "مغلق" : "ملغى"}</span></td><td>{fmtDate(trade.entryTime ?? trade.createdAt)}</td><td><button onClick={() => { if (window.confirm("حذف هذه الصفقة من السجل؟")) { void act({ action: "deleteTrade", tradeId: trade.id }); } }} style={{ cursor: "pointer", border: "1px solid #4a282b", background: "#281719", color: "#f87171", borderRadius: "4px", padding: "2px 5px", display: "inline-flex", alignItems: "center", justifyContent: "center" }} title="حذف الصفقة من السجل"><Trash2 size={12} /></button></td></tr>); }) : <tr><td colSpan={12} className="table-empty">{historyScope === "all" ? "لا توجد صفقات في السجل بعد. استخدم لوحة الأوامر للتدرب." : "لا توجد صفقات في هذه الجلسة بعد. انقر على 'كل الصفقات' لعرض صفقات الجلسات السابقة."}</td></tr>}</tbody></table></div> : <div className="journal-list">{displayedTrades.length ? displayedTrades.slice().reverse().map((trade) => { const totalFees = (trade.entryFee ?? 0) + (trade.exitFee ?? 0); const grossPnl = trade.status === "closed" ? trade.realizedPnl + totalFees : 0; return (<article key={trade.id} style={{padding:"12px",marginBottom:"10px",background:"#141c26",border:"1px solid #283748",borderRadius:"8px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}><div style={{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"}}><BookOpenCheck size={14} /><span>{fmtDate(trade.entryTime ?? trade.createdAt)}</span><b className={trade.realizedPnl >= 0 ? "positive" : "negative"}>{trade.status === "closed" ? `${trade.realizedPnl >= 0 ? "+" : ""}${money(trade.realizedPnl)} USDT صافي` : "قيد المتابعة"}</b>{trade.status === "closed" && (<span style={{ fontSize: "11px", color: "#8fa3b7", background: "#162332", padding: "1px 7px", borderRadius: "4px", border: "1px solid #283748" }}>ربح حركة السعر: <b className={grossPnl >= 0 ? "positive" : "negative"}>{grossPnl >= 0 ? "+" : ""}{money(grossPnl)}$</b> · الرسوم: <b style={{ color: "#f87171" }}>-{money(totalFees)}$</b></span>)}</div><div style={{ display: "flex", alignItems: "center", gap: "6px" }}><button onClick={()=>setReflectionModalTrade(trade)} style={{background:"#1d2d3e",border:"1px solid #3a536e",color:"#8bc0f8",borderRadius:"4px",fontSize:"11px",padding:"2px 8px",cursor:"pointer"}}>تعديل التحليل / الصوت 🎙️</button><button onClick={() => { if (window.confirm("حذف هذه الصفقة وتقريرها من دفتر التداول؟")) { void act({ action: "deleteTrade", tradeId: trade.id }); } }} style={{ background: "#281719", border: "1px solid #4a282b", color: "#f87171", borderRadius: "4px", fontSize: "11px", padding: "2px 6px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "3px" }} title="حذف الصفقة"><Trash2 size={12} /></button></div></div>{trade.reflection && <div style={{display:"flex",gap:"8px",flexWrap:"wrap",margin:"6px 0",fontSize:"11px"}}><span style={{background:"#372611",color:"#fbbf24",border:"1px solid #f59e0b",borderRadius:"4px",padding:"1px 6px",fontWeight:"bold"}}>إعداد: {trade.reflection.setupGrade ?? "—"}</span><span style={{background:"#122822",color:"#34d399",border:"1px solid #10b981",borderRadius:"4px",padding:"1px 6px"}}>استراتيجية: {trade.reflection.strategy ?? "—"}</span><span style={{background:"#261932",color:"#c084fc",border:"1px solid #a855f7",borderRadius:"4px",padding:"1px 6px"}}>نفسية: {trade.reflection.emotion ?? "—"}</span><span style={{background:"#172635",color:"#60a5fa",border:"1px solid #3b82f6",borderRadius:"4px",padding:"1px 6px"}}>ثقة: {trade.reflection.confidence ?? "—"}</span></div>}{trade.reflection?.audioNote && <div style={{marginTop:"6px"}}><audio src={trade.reflection.audioNote} controls style={{height:"30px",maxWidth:"280px"}} /></div>}<p style={{margin:"6px 0",color:"#b6c7d8"}}>{trade.reflection?.notes || trade.reason || "بدون مبرر مكتوب"}</p><details><summary>أحداث الأمر · R {trade.rMultiple?.toFixed(2) ?? "—"}</summary>{trade.events?.map((event,index)=><p key={index}>{fmtDate(event.time)} · {event.detail}</p>)}</details></article>); }) : <div className="journal-empty"><BookOpenCheck size={18} /><span>لم تُسجّل مبررات دخول بعد. أضف مبررًا قبل تنفيذ صفقة.</span><button onClick={() => setLayout(v=>({...v,orderOpen:true}))}>فتح لوحة الأمر</button></div>}</div>}</section>
+          <section className="history-panel"><div className="history-head"><div className="history-tabs"><button onClick={() => { setTab("trades"); setHistoryScope("current"); }} className={tab === "trades" && historyScope === "current" ? "active" : ""}>صفقات الجلسة <span>{sessionTrades.length}</span></button><button onClick={() => { setTab("trades"); setHistoryScope("all"); }} className={tab === "trades" && historyScope === "all" ? "active" : ""}>كل الصفقات <span>{workspace.trades.length}</span></button><button onClick={() => setTab("journal")} className={tab === "journal" ? "active" : ""}><BookOpenCheck size={14} /> دفتر التداول والتحليل</button></div><div style={{ display: "flex", alignItems: "center", gap: "8px" }}>{workspace.sessions.length > 1 && (<select className="session-selector" value={workspace.activeSessionId ?? ""} onChange={(e) => void selectSession(e.target.value)} style={{ background: "#162330", color: "#b4d0ef", border: "1px solid #314a66", borderRadius: "4px", fontSize: "11px", padding: "3px 6px", cursor: "pointer", maxWidth: "240px" }} title="التنقل إلى جلسة سابقة">{workspace.sessions.map((s, idx) => { const count = workspace.trades.filter(t => t.sessionId === s.id).length; return (<option key={s.id} value={s.id}>جلسة {workspace.sessions.length - idx} ({SYMBOL_INFO[s.symbol].base} · {new Date(s.startTime).toLocaleDateString("ar")} · {count} صفقات)</option>); })}</select>)}<button className="export-button" onClick={()=>{const blob=new Blob([JSON.stringify(workspace,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const link=document.createElement("a");link.href=url;link.download="replay-journal.json";link.click();URL.revokeObjectURL(url);}}>تنزيل السجل</button>{displayedTrades.length > 0 && (<button className="export-button" style={{ background: "#261618", borderColor: "#4d2327", color: "#fca5a5" }} onClick={() => { const scopeLabel = historyScope === "all" ? "جميع الصفقات في كل الجلسات" : "صفقات هذه الجلسة"; if (window.confirm(`هل أنت متأكد من مسح ${scopeLabel}؟ لا يمكن التراجع عن هذا الإجراء.`)) { void act({ action: "clearTrades", scope: historyScope }); } }} title="مسح الصفقات"><Trash2 size={12} style={{ display: "inline-block", verticalAlign: "middle", marginLeft: "4px" }} />{historyScope === "all" ? "مسح كل الصفقات" : "مسح صفقات الجلسة"}</button>)}</div></div>{tab === "trades" ? <div className="table-wrap"><table><thead><tr><th>الأصل</th><th>النوع</th><th>الدخول</th><th>الخروج</th><th>مبلغ الدخول</th><th>ربح السعر (إجمالي)</th><th>الرسوم المخصومة</th><th>الصافي النهائي</th><th>التقييم</th><th>الحالة</th><th>الوقت</th><th>حذف</th></tr></thead><tbody>{displayedTrades.length ? displayedTrades.slice().reverse().map((trade) => { const totalFees = (trade.entryFee ?? 0) + (trade.exitFee ?? 0); const grossPnl = trade.status === "closed" ? trade.realizedPnl + totalFees : 0; const pricePct = trade.entryPrice && trade.exitPrice && trade.entryPrice > 0 ? ((trade.exitPrice - trade.entryPrice) / trade.entryPrice) * 100 * (trade.side === "short" ? -1 : 1) : 0; return (<tr key={trade.id}><td><span className="tiny-coin">{SYMBOL_INFO[trade.symbol as SymbolName]?.icon ?? "🪙"}</span>{SYMBOL_INFO[trade.symbol].base}/{SYMBOL_INFO[trade.symbol].quote}</td><td><span className={trade.side==="short"?"negative":"positive"}>{trade.side==="short"?"بيع":"شراء"} {orderLabels[trade.orderType ?? "market"]}</span></td><td>{trade.entryPrice ? price(trade.entryPrice) : trade.orderPrice ? price(trade.orderPrice) : "الافتتاح التالي"}</td><td>{trade.exitPrice ? price(trade.exitPrice) : "—"}</td><td>{money(trade.notional)} {SYMBOL_INFO[trade.symbol].quote}</td><td className={grossPnl >= 0 ? "positive" : "negative"} title={`حركة السعر الصافية بدون رسوم: ${pricePct >= 0 ? "+" : ""}${pricePct.toFixed(2)}%`}>{trade.status === "closed" ? `${grossPnl >= 0 ? "+" : ""}${money(grossPnl)} ${SYMBOL_INFO[trade.symbol].quote} (${pricePct >= 0 ? "+" : ""}${pricePct.toFixed(2)}%)` : "—"}</td><td style={{ color: "#f87171" }} title={`رسوم الدخول: ${money(trade.entryFee ?? 0)}$ · رسوم الخروج: ${money(trade.exitFee ?? 0)}$`}>{trade.status === "closed" ? (totalFees > 0 ? `-${money(totalFees)} ${SYMBOL_INFO[trade.symbol].quote}` : `0.00 ${SYMBOL_INFO[trade.symbol].quote}`) : "—"}</td><td className={trade.realizedPnl >= 0 ? "positive" : "negative"} style={{ fontWeight: "bold" }} title="الصافي المحقق المضاف للمحفظة بعد خصم الرسوم">{trade.status === "closed" ? `${trade.realizedPnl >= 0 ? "+" : ""}${money(trade.realizedPnl)} ${SYMBOL_INFO[trade.symbol].quote}` : "—"}</td><td><button onClick={()=>setReflectionModalTrade(trade)} style={{cursor:"pointer",border:"1px solid #374b60",background:"#162332",color:"#b5d4f4",borderRadius:"4px",padding:"2px 6px",fontSize:"10px"}} title="تحليل الدخول">{trade.reflection?.setupGrade ?? "تقييم"} {trade.reflection?.audioNote ? "🎙️" : ""}</button></td><td><span className={`status-pill ${trade.status}`}>{trade.status === "pending" ? "معلق" : trade.status === "open" ? "مفتوح" : trade.status === "close_pending" ? "إغلاق معلّق" : trade.status === "closed" ? "مغلق" : "ملغى"}</span></td><td>{fmtDate(trade.entryTime ?? trade.createdAt)}</td><td><button onClick={() => { if (window.confirm("حذف هذه الصفقة من السجل؟")) { void act({ action: "deleteTrade", tradeId: trade.id }); } }} style={{ cursor: "pointer", border: "1px solid #4a282b", background: "#281719", color: "#f87171", borderRadius: "4px", padding: "2px 5px", display: "inline-flex", alignItems: "center", justifyContent: "center" }} title="حذف الصفقة من السجل"><Trash2 size={12} /></button></td></tr>); }) : <tr><td colSpan={12} className="table-empty">{historyScope === "all" ? "لا توجد صفقات في السجل بعد. استخدم لوحة الأوامر للتدرب." : "لا توجد صفقات في هذه الجلسة بعد. انقر على 'كل الصفقات' لعرض صفقات الجلسات السابقة."}</td></tr>}</tbody></table></div> : <div className="journal-list">{displayedTrades.length ? displayedTrades.slice().reverse().map((trade) => { const totalFees = (trade.entryFee ?? 0) + (trade.exitFee ?? 0); const grossPnl = trade.status === "closed" ? trade.realizedPnl + totalFees : 0; return (<article key={trade.id} style={{padding:"12px",marginBottom:"10px",background:"#141c26",border:"1px solid #283748",borderRadius:"8px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}><div style={{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"}}><BookOpenCheck size={14} /><span>{fmtDate(trade.entryTime ?? trade.createdAt)}</span><b className={trade.realizedPnl >= 0 ? "positive" : "negative"}>{trade.status === "closed" ? `${trade.realizedPnl >= 0 ? "+" : ""}${money(trade.realizedPnl)} ${SYMBOL_INFO[trade.symbol].quote} صافي` : "قيد المتابعة"}</b>{trade.status === "closed" && (<span style={{ fontSize: "11px", color: "#8fa3b7", background: "#162332", padding: "1px 7px", borderRadius: "4px", border: "1px solid #283748" }}>ربح حركة السعر: <b className={grossPnl >= 0 ? "positive" : "negative"}>{grossPnl >= 0 ? "+" : ""}{money(grossPnl)}$</b> · الرسوم: <b style={{ color: "#f87171" }}>-{money(totalFees)}$</b></span>)}</div><div style={{ display: "flex", alignItems: "center", gap: "6px" }}><button onClick={()=>setReflectionModalTrade(trade)} style={{background:"#1d2d3e",border:"1px solid #3a536e",color:"#8bc0f8",borderRadius:"4px",fontSize:"11px",padding:"2px 8px",cursor:"pointer"}}>تعديل التحليل / الصوت 🎙️</button><button onClick={() => { if (window.confirm("حذف هذه الصفقة وتقريرها من دفتر التداول؟")) { void act({ action: "deleteTrade", tradeId: trade.id }); } }} style={{ background: "#281719", border: "1px solid #4a282b", color: "#f87171", borderRadius: "4px", fontSize: "11px", padding: "2px 6px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "3px" }} title="حذف الصفقة"><Trash2 size={12} /></button></div></div>{trade.reflection && <div style={{display:"flex",gap:"8px",flexWrap:"wrap",margin:"6px 0",fontSize:"11px"}}><span style={{background:"#372611",color:"#fbbf24",border:"1px solid #f59e0b",borderRadius:"4px",padding:"1px 6px",fontWeight:"bold"}}>إعداد: {trade.reflection.setupGrade ?? "—"}</span><span style={{background:"#122822",color:"#34d399",border:"1px solid #10b981",borderRadius:"4px",padding:"1px 6px"}}>استراتيجية: {trade.reflection.strategy ?? "—"}</span><span style={{background:"#261932",color:"#c084fc",border:"1px solid #a855f7",borderRadius:"4px",padding:"1px 6px"}}>نفسية: {trade.reflection.emotion ?? "—"}</span><span style={{background:"#172635",color:"#60a5fa",border:"1px solid #3b82f6",borderRadius:"4px",padding:"1px 6px"}}>ثقة: {trade.reflection.confidence ?? "—"}</span></div>}{trade.reflection?.audioNote && <div style={{marginTop:"6px"}}><audio src={trade.reflection.audioNote} controls style={{height:"30px",maxWidth:"280px"}} /></div>}<p style={{margin:"6px 0",color:"#b6c7d8"}}>{trade.reflection?.notes || trade.reason || "بدون مبرر مكتوب"}</p><details><summary>أحداث الأمر · R {trade.rMultiple?.toFixed(2) ?? "—"}</summary>{trade.events?.map((event,index)=><p key={index}>{fmtDate(event.time)} · {event.detail}</p>)}</details></article>); }) : <div className="journal-empty"><BookOpenCheck size={18} /><span>لم تُسجّل مبررات دخول بعد. أضف مبررًا قبل تنفيذ صفقة.</span><button onClick={() => setLayout(v=>({...v,orderOpen:true}))}>فتح لوحة الأمر</button></div>}</div>}</section>
         </section>
 
         <div className="order-resizer" role="separator" tabIndex={0} aria-label="تغيير عرض لوحة الأوامر" aria-orientation="vertical" aria-valuemin={280} aria-valuemax={460} aria-valuenow={layout.width} onPointerDown={e=>resizeStart(e,"order")} onPointerMove={resizeMove} onPointerUp={()=>{resizeRef.current=null;}} onPointerCancel={()=>{resizeRef.current=null;}} onKeyDown={e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight") {e.preventDefault();setLayout(v=>({...v,width:Math.max(280,Math.min(460,v.width+(e.key==="ArrowRight"?20:-20)))}));}}}/>
@@ -2636,8 +2763,8 @@ export default function TradingLab() {
                 <span>تعديل الرصيد</span>
               </button>
             </div>
-            <strong>{money(equity)} <small>USDT</small></strong>
-            <div className="balance-bottom"><span>ربح/خسارة الجلسة</span><b className={netPnl >= 0 ? "positive" : "negative"}>{netPnl >= 0 ? "+" : ""}{money(netPnl)} USDT</b></div>
+            <strong>{money(equity)} <small>{quote}</small></strong>
+            <div className="balance-bottom"><span>ربح/خسارة الجلسة</span><b className={netPnl >= 0 ? "positive" : "negative"}>{netPnl >= 0 ? "+" : ""}{money(netPnl)} {quote}</b></div>
           </div>
           <div className="panel-tabs"><button className={!statsOpen?"active":""} onClick={()=>setStatsOpen(false)}>الأوامر</button><button onClick={() => setStatsOpen(!statsOpen)}>الأداء <Activity size={13} /></button></div>
           {statsOpen ? <div className="stats-content">
@@ -2647,8 +2774,8 @@ export default function TradingLab() {
             <div><span>الصفقات المغلقة</span><b>{closedTrades.length}</b></div>
             <div><span>نسبة الفوز</span><b>{winRate.toFixed(1)}%</b></div>
             <div><span>رابحة / خاسرة</span><b><i className="positive">{wins}</i> / <i className="negative">{losses}</i></b></div>
-            <div><span>إجمالي رسوم الجلسة</span><b style={{ color: "#f87171" }}>-{money(closedTrades.reduce((acc, t) => acc + (t.entryFee ?? 0) + (t.exitFee ?? 0), 0))} USDT</b></div>
-            <div><span>صافي أرباح الجلسة</span><b className={netPnl >= 0 ? "positive" : "negative"}>{netPnl >= 0 ? "+" : ""}{money(netPnl)} USDT</b></div>
+            <div><span>إجمالي رسوم الجلسة</span><b style={{ color: "#f87171" }}>-{money(closedTrades.reduce((acc, t) => acc + (t.entryFee ?? 0) + (t.exitFee ?? 0), 0))} {quote}</b></div>
+            <div><span>صافي أرباح الجلسة</span><b className={netPnl >= 0 ? "positive" : "negative"}>{netPnl >= 0 ? "+" : ""}{money(netPnl)} {quote}</b></div>
             {workspace.sessions.length > 1 && (
               <>
                 <div style={{marginTop: "10px", marginBottom: "6px", borderBottom: "1px solid #233140", paddingBottom: "4px"}}>
@@ -2657,8 +2784,8 @@ export default function TradingLab() {
                 <div><span>إجمالي الصفقات المغلقة</span><b>{allClosedTrades.length}</b></div>
                 <div><span>نسبة الفوز الكلية</span><b>{allWinRate.toFixed(1)}%</b></div>
                 <div><span>رابحة / خاسرة</span><b><i className="positive">{allWins}</i> / <i className="negative">{allLosses}</i></b></div>
-                <div><span>إجمالي رسوم كل الجلسات</span><b style={{ color: "#f87171" }}>-{money(allClosedTrades.reduce((acc, t) => acc + (t.entryFee ?? 0) + (t.exitFee ?? 0), 0))} USDT</b></div>
-                <div><span>صافي الأرباح الكلي</span><b className={allNetPnl >= 0 ? "positive" : "negative"}>{allNetPnl >= 0 ? "+" : ""}{money(allNetPnl)} USDT</b></div>
+                <div><span>إجمالي رسوم كل الجلسات (وحدات محاكاة)</span><b style={{ color: "#f87171" }}>-{money(allClosedTrades.reduce((acc, t) => acc + (t.entryFee ?? 0) + (t.exitFee ?? 0), 0))} {quote}</b></div>
+                <div><span>صافي الأرباح الكلي (وحدات محاكاة)</span><b className={allNetPnl >= 0 ? "positive" : "negative"}>{allNetPnl >= 0 ? "+" : ""}{money(allNetPnl)} {quote}</b></div>
               </>
             )}
             <p>الرسوم 0.15% لكل تنفيذ · انزلاق سعري 0.02% · شراء وبيع محاكى دون رافعة</p>
@@ -2673,7 +2800,7 @@ export default function TradingLab() {
                       className="close-all-trades-btn"
                       disabled={loading}
                       onClick={() => {
-                        if (window.confirm("إغلاق جميع الصفقات المفتوحة فوراً؟")) {
+                        if (window.confirm("إرسال إغلاق جميع الصفقات المفتوحة عند الافتتاح التالي؟")) {
                           void act({ action: "close", all: true });
                         }
                       }}
@@ -2855,7 +2982,7 @@ export default function TradingLab() {
                 {orderType === "market" ? "تنفيذ عند افتتاح الدقيقة التالية." : orderType === "limit" ? "تنفيذ بسعر الحد أو أفضل وفق اتجاه الصفقة." : "أمر سوق عند بلوغ سعر التفعيل؛ ليس وقف خسارة."}
               </p>
               <div className="order-field">
-                <label htmlFor="entry-amount">مبلغ الدخول · USDT</label>
+                <label htmlFor="entry-amount">مبلغ الدخول · {quote}</label>
                 <div className="input-with-unit">
                   <input
                     id="entry-amount"
@@ -2865,7 +2992,7 @@ export default function TradingLab() {
                     value={notional}
                     onChange={(e) => setNotional(e.target.value)}
                   />
-                  <span>USDT</span>
+                  <span>{quote}</span>
                 </div>
                 <div className="quick-sizes">
                   {[50, 100, 250, 500].map((amount) => (
@@ -2874,11 +3001,11 @@ export default function TradingLab() {
                       className={Number(notional) === amount ? "picked" : ""}
                       onClick={() => setNotional(String(amount))}
                     >
-                      {amount} USDT
+                      {amount} {quote}
                     </button>
                   ))}
                 </div>
-                <small className="cash-available">المتاح للدخول <b dir="ltr">{money(availableCash)} USDT</b></small>
+                <small className="cash-available">المتاح للدخول <b dir="ltr">{money(availableCash)} {quote}</b></small>
               </div>
               <div className="risk-fields">
                 <label>
@@ -2908,15 +3035,15 @@ export default function TradingLab() {
                 disabled={confirming || !session || !dataReady || availableCash < 10}
               >
                 <span>{quickDraft ? "تأكيد الدخول" : (side === "short" ? "بيع (Short)" : "شراء (Long)")} {SYMBOL_INFO[currentSymbol]?.base ?? currentSymbol.slice(0, -4)}</span>
-                <b dir="ltr">{Number.isFinite(orderAmount) && orderAmount > 0 ? money(orderAmount) : "—"} USDT</b>
+                <b dir="ltr">{Number.isFinite(orderAmount) && orderAmount > 0 ? money(orderAmount) : "—"} {quote}</b>
               </button>
               <div className="cash-breakdown" aria-label="ملخص الصفقة بالدولار">
-                <div><span>مبلغ الصفقة</span><b dir="ltr">{Number.isFinite(orderAmount) && orderAmount > 0 ? money(orderAmount) : "—"} USDT</b></div>
-                <div><span>رسوم الدخول (0.15%)</span><b dir="ltr">{cash ? money(cash.fee) : "—"} USDT</b></div>
-                <div className="cash-total"><span>الإجمالي مع الرسوم</span><b dir="ltr">{cash ? money(cash.total) : "—"} USDT</b></div>
-                <div><span>حركة السعر عند الوقف</span><b dir="ltr" className="negative">{stopGross !== null ? `−${money(stopGross)} USDT (−${stopDistancePct?.toFixed(2)}%)` : "—"}</b></div>
+                <div><span>مبلغ الصفقة</span><b dir="ltr">{Number.isFinite(orderAmount) && orderAmount > 0 ? money(orderAmount) : "—"} {quote}</b></div>
+                <div><span>رسوم الدخول (0.15%)</span><b dir="ltr">{cash ? money(cash.fee) : "—"} {quote}</b></div>
+                <div className="cash-total"><span>الإجمالي مع الرسوم</span><b dir="ltr">{cash ? money(cash.total) : "—"} {quote}</b></div>
+                <div><span>حركة السعر عند الوقف</span><b dir="ltr" className="negative">{stopGross !== null ? `−${money(stopGross)} ${quote} (−${stopDistancePct?.toFixed(2)}%)` : "—"}</b></div>
                 <div><span>صافي النتيجة عند الوقف (مع الرسوم) ≈</span><b dir="ltr" className={cash && cash.stopNet >= 0 ? "positive" : "negative"}>{cash ? signedCash(cash.stopNet) : "—"}</b></div>
-                <div><span>حركة السعر عند الهدف</span><b dir="ltr" className="positive">{targetGross !== null ? `+${money(targetGross)} USDT (+${targetDistancePct?.toFixed(2)}%)` : "—"}</b></div>
+                <div><span>حركة السعر عند الهدف</span><b dir="ltr" className="positive">{targetGross !== null ? `+${money(targetGross)} ${quote} (+${targetDistancePct?.toFixed(2)}%)` : "—"}</b></div>
                 <div><span>صافي النتيجة عند الهدف (مع الرسوم) ≈</span><b dir="ltr" className={cash && cash.targetNet >= 0 ? "positive" : "negative"}>{cash ? signedCash(cash.targetNet) : "—"}</b></div>
                 <small>حركة السعر مجردة بالنسبة المئوية ($)، والصافي يخصم رسوم بينانس (0.15% دخول + 0.15% خروج) والانزلاق 0.02%.</small>
               </div>
@@ -2988,7 +3115,7 @@ export default function TradingLab() {
           <div className="risk-note"><ShieldCheck size={14} /><p>محاكاة تعليمية فقط. لا يتم إرسال أي أوامر إلى Binance.</p></div>
         </aside>
       </div>
-      <footer className="statusbar"><span>{loading ? "جار تحميل البيانات" : !dataReady ? "البيانات غير جاهزة" : source || "بيانات تاريخية"}</span><span>جلساتك تحفظ تلقائيًا</span><span><DollarSign size={12} /> الرصيد {money(equity)} USDT · المتاح {money(availableCash)} USDT</span><span className="statusbar-right">{error ? "راجع رسالة الخطأ" : session ? "جلسة محفوظة" : "ابدأ جلسة تدريب"}</span></footer>
+      <footer className="statusbar"><span>{loading ? "جار تحميل البيانات" : !dataReady ? "البيانات غير جاهزة" : source || "بيانات تاريخية"}</span><span>جلساتك تحفظ تلقائيًا · تنفيذ شموع تقديري: وقف أولًا عند الغموض، انزلاق 0.02% ورسوم افتراضية 0.15% لكل جهة وليست تعرفة وسيط · Order Flow تقديري</span><span><DollarSign size={12} /> الرصيد {money(equity)} {quote} · المتاح {money(availableCash)} {quote}</span><span className="statusbar-right">{error ? "راجع رسالة الخطأ" : session ? "جلسة محفوظة" : "ابدأ جلسة تدريب"}</span></footer>
 
       <TradeReflectionModal
         key={reflectionModalTrade?.id ?? "none"}

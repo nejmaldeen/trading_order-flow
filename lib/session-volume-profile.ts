@@ -68,7 +68,8 @@ export function computeDailySessionProfiles(
   bucketCount = 36,
   valueAreaRatio = 0.70,
   timeframe: Timeframe = "15m",
-  grouping: SessionGrouping = "auto"
+  grouping: SessionGrouping = "auto",
+  timezone = "UTC"
 ): DailySessionProfile[] {
   if (!candles || candles.length === 0) return [];
 
@@ -80,13 +81,15 @@ export function computeDailySessionProfiles(
 
   const sessionMap = new Map<string, Candle[]>();
   for (const c of candles) {
+    const sessionDate = new Intl.DateTimeFormat("en-CA",{timeZone:timezone,year:"numeric",month:"2-digit",day:"2-digit"}).format(c.openTime);
+    const dateTime=Date.parse(sessionDate+"T12:00:00Z");
     let key: string;
     if (resolvedGrouping === "week") {
-      key = getUtcWeekKey(c.openTime);
+      key = getUtcWeekKey(dateTime);
     } else if (resolvedGrouping === "month") {
-      key = getUtcMonthKey(c.openTime);
+      key = getUtcMonthKey(dateTime);
     } else {
-      key = getUtcDayKey(c.openTime);
+      key = sessionDate;
     }
 
     let list = sessionMap.get(key);

@@ -44,3 +44,10 @@ next-env.d.ts
 /.codex/
 /outputs/
 /work/
+
+# Credentials must never enter source or deployment archives.
+alpaca-private.*
+*.tsbuildinfo
+.dev.vars*
+
+/.next-production/

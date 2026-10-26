@@ -8,7 +8,7 @@ test('offline engine: summary provides valid data for all 4 assets', () => {
   const summary = getOfflineSummary();
   assert.equal(summary.version, 1);
   assert.ok(summary.updatedAt);
-  for (const sym of SYMBOLS) {
+  for (const sym of SYMBOLS.filter(s=>!["AAPL","NVDA","AMD","GOOGL"].includes(s))) {
     assert.ok(summary.symbols[sym], `Offline summary should exist for ${sym}`);
     assert.ok(summary.symbols[sym].timeframes['15m'], `15m data should exist for ${sym}`);
     assert.ok(summary.symbols[sym].timeframes['1m'], `1m data should exist for ${sym}`);
@@ -16,7 +16,7 @@ test('offline engine: summary provides valid data for all 4 assets', () => {
 });
 
 test('offline engine: returns valid candle series for Gold, BTC, ETH, and SOL without internet', async () => {
-  for (const sym of SYMBOLS) {
+  for (const sym of SYMBOLS.filter(s=>!["AAPL","NVDA","AMD","GOOGL"].includes(s))) {
     const bounds = getOfflineDateBounds(sym, '15m');
     assert.ok(bounds, `Bounds must exist for ${sym}`);
     assert.ok(bounds.count > 0);

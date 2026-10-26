@@ -5,6 +5,7 @@ import type { IndicatorKey, IndicatorSettings } from "@/lib/indicators";
 import type { InstitutionalChartConfig } from "@/lib/institutional-chart-types";
 
 const catalog = [
+  { id: "czt_v2_master", name: "مؤشر CZT المؤسسي الرئيسي (V2 Master)", code: "CZT V2 · 1.5x Prime & Rebound", description: "بروفايل الحجم المؤسسي VAH/VAL/POC، فلتر الاتجاه EMA100، وإشارات PRIME BUY و VAL REBOUND.", category: "orderflow" },
   { id: "session_profile", name: "بروفايل سيولة الجلسات اليومية", code: "SVP · Session Profile", description: "توزيع السيولة الأفقي لكل يوم، منطقة القيمة (70%)، وخط السيطرة (POC).", category: "orderflow" },
   { id: "deep_stats", name: "إحصائيات البارات والدلتا", code: "Deep Stats · Footprint", description: "شريط حراري أفقي متزامن مع كل شمعة يعرض الحجم، الدلتا، انقلاب الدلتا ورصد الامتصاص كفيديو Immery Gams.", category: "orderflow" },
   { id: "inst_liq", name: "برك التصفية المغناطيسية", code: "Coinglass Liq", description: "خطوط نيون أفقية على الشارت لمناطق تصفية الشورت واللونج الضخمة.", category: "orderflow" },
@@ -39,6 +40,8 @@ type Props = {
   onShowVolumeMaChange?: (v: boolean) => void;
   sessionVolumeProfile?: boolean;
   onSessionVolumeProfile?: (v: boolean) => void;
+  cztV2?: boolean;
+  onCztV2?: (v: boolean) => void;
   deepStats?: boolean;
   onDeepStats?: (v: boolean) => void;
   sessionProfileGrouping?: string;
@@ -76,6 +79,7 @@ export default function IndicatorLibrary(p: Props) {
   }, [p.open]);
 
   const active = (id: string) => {
+    if (id === "czt_v2_master") return Boolean(p.cztV2);
     if (id === "session_profile") return Boolean(p.sessionVolumeProfile);
     if (id === "deep_stats") return Boolean(p.deepStats);
     if (id === "vwap") return p.vwap;
@@ -89,7 +93,8 @@ export default function IndicatorLibrary(p: Props) {
   };
 
   const toggle = (id: string) => {
-    if (id === "session_profile") p.onSessionVolumeProfile?.(!p.sessionVolumeProfile);
+    if (id === "czt_v2_master") p.onCztV2?.(!p.cztV2);
+    else if (id === "session_profile") p.onSessionVolumeProfile?.(!p.sessionVolumeProfile);
     else if (id === "deep_stats") p.onDeepStats?.(!p.deepStats);
     else if (id === "vwap") p.onVwap(!p.vwap);
     else if (id === "volume") p.onVolume(!p.volume);
