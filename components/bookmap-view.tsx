@@ -600,9 +600,9 @@ export default function BookmapView({
             <strong>BOOKMAP · تدفق الأوامر</strong>
           </div>
           <span className="bookmap-meta">
-            {symInfo?.icon} {symbol.slice(0, -4)} / TetherUS · {timeframe} · Binance Spot
+            {symInfo?.icon} {symInfo?.base} / {symInfo?.quote} · {timeframe}
           </span>
-          <span className="real-data-tag">بيانات صفقات حقيقية 100%</span>
+          <span className="real-data-tag">توزيع الحجم والعمق تقديري من الشموع؛ ليس سجل صفقات أو دفتر أوامر</span>
         </div>
 
         <div className="bookmap-stats-strip">
@@ -611,7 +611,7 @@ export default function BookmapView({
             <b>{formatVol(stats.totalVol)}</b>
           </div>
           <div className="stat-item">
-            <small>صافي الدلتا (CVD)</small>
+            <small>دلتا الشموع (مرصودة عند توفرها، وإلا تقديرية)</small>
             <b className={stats.netDelta >= 0 ? "positive" : "negative"}>
               {stats.netDelta >= 0 ? "+" : ""}
               {formatVol(stats.netDelta)}

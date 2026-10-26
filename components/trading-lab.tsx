@@ -59,7 +59,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { blank, appendReplayBatch, INITIAL_BALANCE, SYMBOLS, SYMBOL_INFO, type SymbolName, type Timeframe, type Candle, type Session, type Trade, type Workspace, type OrderType } from "@/lib/replay";
+import { blank, availableReplayCash, appendReplayBatch, INITIAL_BALANCE, SYMBOLS, SYMBOL_INFO, type SymbolName, type Timeframe, type Candle, type Session, type Trade, type Workspace, type OrderType } from "@/lib/replay";
 import MacroPanel from "@/components/macro-panel";
 import type {MacroSnapshot} from "@/lib/macro";
 import type {NewsRecord} from "@/lib/news-archive";
@@ -1034,13 +1034,7 @@ export default function TradingLab() {
     selectedSide
   );
 
-  const tiedMargin = activeTrades.reduce((sum, t) => {
-    const cost = t.entryPrice
-      ? (t.remainingQuantity ?? t.quantity ?? 0) * t.entryPrice + t.entryFee * (t.remainingQuantity ?? t.quantity ?? 0) / (t.quantity || 1)
-      : (t.notional ?? 0) * (1 + FEE_RATE);
-    return sum + cost;
-  }, 0);
-  const availableCash = Math.max(0, equity - tiedMargin);
+  const availableCash = session ? availableReplayCash(workspace,session.id) : equity;
 
   const signedCash = (value: number) => `${value >= 0 ? "+" : "−"}${money(Math.abs(value))} ${quote}`;
   const stopDistancePct = expectedEntry > 0 && previewStop !== null ? (Math.abs(expectedEntry - previewStop) / expectedEntry) * 100 : null;
@@ -1903,7 +1897,7 @@ export default function TradingLab() {
                   type="button"
                   className={chartViewMode === "bookmap" ? "active" : ""}
                   onClick={() => setChartViewMode("bookmap")}
-                  title="منصة تدفق الأوامر والفقاعات الحقيقية"
+                  title="عرض تقديري لتدفق الأوامر والفقاعات من الشموع"
                 >
                   Bookmap
                 </button>

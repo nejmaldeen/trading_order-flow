@@ -4,6 +4,20 @@ import { createClient } from '@libsql/client/node';
 import { drizzle } from 'drizzle-orm/libsql/web';
 import { and, eq } from 'drizzle-orm';
 import { workspaces } from '../db/schema.ts';
+import { allowLoginAttempt } from '../lib/login-throttle.ts';
+
+test('login throttle is atomic across concurrent requests and survives module state reset',async()=>{
+  const client=createClient({url:'file::memory:'});
+  try {
+    await client.execute('CREATE TABLE login_attempts (id TEXT PRIMARY KEY NOT NULL, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL)');
+    const db=drizzle(client),now=1800000000000;
+    const results=await Promise.all(Array.from({length:20},()=>allowLoginAttempt(db,now)));
+    assert.equal(results.filter(Boolean).length,10);
+    const fresh=await import('../lib/login-throttle.ts?fresh=1');
+    assert.equal(await fresh.allowLoginAttempt(drizzle(client),now+1000),false);
+    assert.equal(await fresh.allowLoginAttempt(drizzle(client),now+60000),true);
+  } finally {client.close();}
+});
 
 test('libSQL preserves owner isolation and atomic compare-and-swap saves',async()=>{
   const client=createClient({url:'file::memory:'});
