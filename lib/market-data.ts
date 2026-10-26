@@ -1,3 +1,4 @@
+import { isEquity, equityRange, aggregateEquity, equityHistory, EQUITY_SOURCE } from "./equity-market.ts";
 import { inflateRawSync } from "node:zlib";
 import { DURATIONS, appendReplayCandle, validCandle, validateMinutes, type Candle, type Session, type SymbolName, type Timeframe } from "./replay.ts";
 import { offlineMarketData } from "./offline-market.ts";
@@ -67,10 +68,23 @@ async function archive(symbol:SymbolName,interval:Timeframe,part:string,monthly:
   if(archiveCache.size>=16) archiveCache.delete(archiveCache.keys().next().value!);
   archiveCache.set(path,candles); return candles;
 }
+export const NON_BINANCE_SYMBOLS = new Set<SymbolName>(["AAPL", "NVDA", "AMD", "GOOGL", "PAXGUSDT"]);
+
+export function isNonBinanceSymbol(symbol: string): boolean {
+  return NON_BINANCE_SYMBOLS.has(symbol as SymbolName);
+}
+
 export const marketData: MarketProvider = async (symbol,interval,start,end) => {
+  if (isEquity(symbol)) {
+    const b = await equityRange(symbol,start,end);
+    return {candles:aggregateEquity(b.candles,interval,b.sessions),source:EQUITY_SOURCE};
+  }
   const duration=DURATIONS[interval];
   const safeEnd=Math.min(end,Math.floor(Date.now()/duration)*duration-1);
-  if(safeEnd<start) return {candles:[],source:"Binance"};
+  if(safeEnd<start) return {candles:[],source: isNonBinanceSymbol(symbol) ? "المخزن المحلي · وضع عدم الاتصال (أوفلاين)" : "Binance"};
+  if (isNonBinanceSymbol(symbol)) {
+    return offlineMarketData(symbol, interval, start, safeEnd);
+  }
   // Reuse already verified historical archives before trying the network again.
   const cached:Candle[]=[];
   for(let day=Math.floor(start/DAY)*DAY;day<=safeEnd;day+=DAY) {
@@ -129,20 +143,35 @@ export const marketData: MarketProvider = async (symbol,interval,start,end) => {
   }
 };
 export async function chartHistory(session:Session,timeframe:Timeframe,provider:MarketProvider=marketData) {
+  if (isEquity(session.symbol) && session.dataSource!=="alpaca-sip-raw") return {candles:[],source:"جلسة قديمة للقراءة فقط؛ الأسعار الاصطناعية مؤرشفة ونتائج الصفقات محفوظة. ابدأ جلسة SIP جديدة."};
+  if (isEquity(session.symbol)) return equityHistory(session,timeframe);
   const duration=DURATIONS[timeframe], cutoff=session.cursorTime;
+  const isOfflineOrEquity = session.isOffline || isNonBinanceSymbol(session.symbol);
+  const effectiveProvider = isOfflineOrEquity ? offlineMarketData : provider;
   const bucket=Math.floor((cutoff+1)/duration)*duration;
-  const completed=await provider(session.symbol,timeframe,Math.max(HISTORY_START,bucket-(HISTORY_PAGE_SIZE-1)*duration),bucket-1);
+  const completed=await effectiveProvider(session.symbol,timeframe,Math.max(HISTORY_START,bucket-(HISTORY_PAGE_SIZE-1)*duration),bucket-1);
   // Strict close-time filtering even if the upstream endTime only filters open times.
   let candles=completed.candles.filter(c=>c.closeTime<=cutoff && c.closeTime<bucket);
-  if(candles.some((c,i)=>!validCandle(c,duration)||(i>0&&c.openTime!==candles[i-1].openTime+duration)))
+  if(candles.some((c,i)=>!validCandle(c,duration)||(i>0 && !isOfflineOrEquity && c.openTime!==candles[i-1].openTime+duration)))
     throw new MarketError("توجد فجوة في تاريخ الشارت؛ تعذر تحميل العرض بأمان.");
   const sources=new Set([completed.source]);
   if(bucket<=cutoff) {
-    const part=await provider(session.symbol,"1m",bucket,cutoff);
-    const minutes=part.candles.filter(c=>c.closeTime<=cutoff);
-    validateMinutes(minutes,bucket,Math.floor((cutoff-bucket+1)/60000));
-    for(const c of minutes) candles=appendReplayCandle(candles,c,timeframe);
-    sources.add(part.source);
+    if (!isOfflineOrEquity) {
+      const part=await effectiveProvider(session.symbol,"1m",bucket,cutoff);
+      const minutes=part.candles.filter(c=>c.closeTime<=cutoff);
+      validateMinutes(minutes,bucket,Math.floor((cutoff-bucket+1)/60000));
+      for(const c of minutes) candles=appendReplayCandle(candles,c,timeframe);
+      sources.add(part.source);
+    } else {
+      try {
+        const part=await effectiveProvider(session.symbol,"1m",bucket,cutoff);
+        const minutes=part.candles.filter(c=>c.closeTime<=cutoff);
+        if (minutes.length > 0) {
+          for(const c of minutes) candles=appendReplayCandle(candles,c,timeframe);
+          sources.add(part.source);
+        }
+      } catch {}
+    }
   }
   if(!candles.length) throw new MarketError("لا توجد بيانات لهذا التاريخ والأصل.");
   return {candles,source:[...sources].join(" / ")};
@@ -150,16 +179,20 @@ export async function chartHistory(session:Session,timeframe:Timeframe,provider:
 
 // Historical pages never change session time or execute trades.
 export async function olderHistory(session:Session,timeframe:Timeframe,before:number,provider:MarketProvider=marketData) {
+  if (isEquity(session.symbol) && session.dataSource!=="alpaca-sip-raw") return {candles:[],source:"جلسة قديمة مؤرشفة",hasMore:false};
+  if (isEquity(session.symbol)) return equityHistory(session,timeframe,before);
   const duration=DURATIONS[timeframe];
+  const isOfflineOrEquity = session.isOffline || isNonBinanceSymbol(session.symbol);
+  const effectiveProvider = isOfflineOrEquity ? offlineMarketData : provider;
   if(!Number.isSafeInteger(before)||before%duration!==0||before>session.cursorTime+1)
     throw new MarketError("حد التاريخ غير صالح.");
   const end=Math.min(before-1,Math.floor((session.cursorTime+1)/duration)*duration-1);
   const start=Math.max(HISTORY_START,end+1-HISTORY_PAGE_SIZE*duration);
-  if(start>end)return {candles:[],source:"Binance",hasMore:false};
-  const result=await provider(session.symbol,timeframe,start,end);
+  if(start>end)return {candles:[],source: isOfflineOrEquity ? "المخزن المحلي · وضع عدم الاتصال (أوفلاين)" : "Binance",hasMore:false};
+  const result=await effectiveProvider(session.symbol,timeframe,start,end);
   const candles=result.candles.filter(c=>c.openTime>=start&&c.closeTime<=end&&c.closeTime<=session.cursorTime);
-  if(candles.some((c,i)=>!validCandle(c,duration)||(i>0&&c.openTime!==candles[i-1].openTime+duration))||
-    (candles.length>0&&candles.at(-1)!.closeTime!==end))throw new MarketError("توجد فجوة في التاريخ الأقدم؛ أعد المحاولة.");
+  if(candles.some((c,i)=>!validCandle(c,duration)||(i>0 && !isOfflineOrEquity && c.openTime!==candles[i-1].openTime+duration))||
+    (candles.length>0 && !isOfflineOrEquity && candles.at(-1)!.closeTime!==end))throw new MarketError("توجد فجوة في التاريخ الأقدم؛ أعد المحاولة.");
   if(!candles.length&&start>HISTORY_START)throw new MarketError("تعذر الحصول على التاريخ الأقدم؛ أعد المحاولة.");
   return {...result,candles,hasMore:!!candles.length&&candles[0].openTime>HISTORY_START};
 }

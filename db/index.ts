@@ -1,57 +1,35 @@
+import { drizzle } from "drizzle-orm/d1";
+import { drizzle as drizzleRemote } from "drizzle-orm/libsql/web";
+import { createClient } from "@libsql/client/web";
 import * as schema from "./schema";
 
-// In-memory fallback store for environments without Cloudflare D1 (e.g. Vercel, Node.js)
-const memoryStore = new Map<string, { ownerId: string; stateJson: string; updatedAt: string }>();
+// Never report successful durable writes using serverless process memory.
 
-export function getDb() {
+let remote: ReturnType<typeof drizzleRemote<typeof schema>> | undefined;
+let ready: Promise<void> | undefined;
+export async function getDb() {
+  if (process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN) {
+    if (!remote) {
+      const client = createClient({url:process.env.TURSO_DATABASE_URL,authToken:process.env.TURSO_AUTH_TOKEN});
+      remote = drizzleRemote(client, {schema});
+      // Idempotent initialization of the existing session schema only. No market archive.
+      ready = client.batch([
+        'CREATE TABLE IF NOT EXISTS trading_workspaces (owner_id TEXT PRIMARY KEY NOT NULL, state_json TEXT NOT NULL, updated_at TEXT NOT NULL)',
+      ], 'write').then(() => {}).catch(() => { remote=undefined; throw new Error('تعذر تهيئة تخزين الجلسات؛ تحقق من ربط قاعدة البيانات.'); });
+    }
+    await ready;
+    return remote!;
+  }
   try {
     // Check if Cloudflare D1 environment is present
     // @ts-ignore
     const workers = require("cloudflare:workers");
     if (workers?.env?.DB) {
-      // @ts-ignore
-      const { drizzle } = require("drizzle-orm/d1");
       return drizzle(workers.env.DB, { schema });
     }
   } catch {
-    // Fall back to memory store
+    // Fail closed below when the durable binding is unavailable.
   }
 
-  // Resilient fallback implementation for Vercel / Node.js
-  return {
-    select: () => ({
-      from: () => ({
-        where: (condition: any) => ({
-          limit: async () => {
-            const entries = Array.from(memoryStore.values());
-            return entries.slice(0, 1);
-          },
-        }),
-      }),
-    }),
-    insert: () => ({
-      values: (val: any) => ({
-        onConflictDoNothing: () => ({
-          returning: async () => {
-            if (val?.ownerId) {
-              memoryStore.set(val.ownerId, val);
-            }
-            return [{ id: val?.ownerId }];
-          },
-        }),
-      }),
-    }),
-    update: () => ({
-      set: (val: any) => ({
-        where: (condition: any) => ({
-          returning: async () => {
-            for (const [k, v] of memoryStore.entries()) {
-              memoryStore.set(k, { ...v, ...val });
-            }
-            return [{ id: "owner" }];
-          },
-        }),
-      }),
-    }),
-  } as any;
+  throw new Error("Durable session storage unavailable: configure Turso credentials or the Cloudflare D1 DB binding. No session was saved to temporary memory.");
 }

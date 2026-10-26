@@ -1,5 +1,6 @@
 import offlinePack from '../data/offline-pack.json' with { type: 'json' };
 import { DURATIONS, type Candle, type SymbolName, type Timeframe } from './replay.ts';
+import { validCandle } from './replay.ts';
 import type { MarketResult } from './market-data.ts';
 
 type RawCandleRow = [number, number, number, number, number, number];
@@ -96,7 +97,9 @@ export async function offlineMarketData(
     const openTime = row[0];
     const closeTime = openTime + duration - 1;
     if (openTime >= start && closeTime <= end) {
-      matched.push(parseRawRow(row, interval));
+      const candle = parseRawRow(row, interval);
+      if (!validCandle(candle, duration)) throw new Error("شمعة محلية غير صالحة؛ رفض استخدامها في العرض والتنفيذ.");
+      matched.push(candle);
     }
   }
 

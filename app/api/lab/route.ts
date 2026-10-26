@@ -1,17 +1,19 @@
+import { isEquity, checkEquityStart, equityStep, latestEquityStart } from "@/lib/equity-market";
 import { macroAt } from "@/lib/macro";
 import { validateStopLevels, validateTakeProfitLevels } from "@/lib/stop-levels";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
+import { requestOwner } from "@/lib/personal-auth";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { workspaces } from "@/db/schema";
 import { activeSession, advance, blank, event, FEE_RATE, INITIAL_BALANCE, normalizeWorkspace, SYMBOLS, DURATIONS, finishTrade, SLIPPAGE, type Workspace, type Trade, type Session, type Timeframe } from "@/lib/replay";
-import { chartHistory, olderHistory, marketData, MarketError } from "@/lib/market-data";
+import { chartHistory, olderHistory, marketData, MarketError, isNonBinanceSymbol } from "@/lib/market-data";
 import { offlineMarketData, getOfflineSummary, getOfflineDateBounds } from "@/lib/offline-market";
 
 export const dynamic = "force-dynamic";
 
-const getProvider = (session?: Session | null) => (session?.isOffline ? offlineMarketData : marketData);
+const getProvider = (session?: Session | null) => (session && isEquity(session.symbol) ? marketData : session?.isOffline || (session?.symbol && isNonBinanceSymbol(session.symbol)) ? offlineMarketData : marketData);
 
 const reflectionSchema = z.object({
   setupGrade: z.string().optional(),
@@ -23,7 +25,7 @@ const reflectionSchema = z.object({
 });
 
 const actionSchema=z.discriminatedUnion("action",[
-  z.object({action:z.literal("start"),symbol:z.enum(SYMBOLS),startTime:z.number().int().positive(),confirmReplace:z.boolean().default(false),offline:z.boolean().optional()}),
+  z.object({action:z.literal("start"),symbol:z.enum(SYMBOLS),startTime:z.number().int().positive(),latest:z.boolean().optional(),confirmReplace:z.boolean().default(false),offline:z.boolean().optional()}),
   z.object({action:z.literal("step"),unit:z.enum(["minute","bar"]).default("minute"),count:z.number().int().min(1).max(64).default(1)}),
   z.object({action:z.literal("buy"),side:z.enum(["long","short"]).default("long"),orderType:z.enum(["market","limit","stop"]).default("market"),orderPrice:z.number().positive().nullable().optional(),notional:z.number().positive().max(100000),stopLoss:z.number().positive(),takeProfit:z.number().positive(),previewOriginal:z.object({entry:z.number().positive(),stop:z.number().positive(),target:z.number().positive()}).nullish(),reason:z.string().max(500).default(""),reflection:reflectionSchema.optional()}),
   z.object({action:z.literal("stops"),tradeId:z.string(),levels:z.array(z.object({price:z.number().positive(),amount:z.number().positive()})).max(5)}),
@@ -39,9 +41,9 @@ const actionSchema=z.discriminatedUnion("action",[
   z.object({action:z.literal("setBalance"),balance:z.number().positive().max(10000000),resetTrades:z.boolean().default(false)})
 ]);
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{"Cache-Control":"no-store, max-age=0"}});
-async function ownerId(){const h=await headers();return h.get("oai-authenticated-user-id")||(process.env.NODE_ENV!=="production"?"preview-owner":null);}
+async function ownerId(){return requestOwner(await headers());}
 async function readWorkspace(id:string){
-  const rows=await getDb().select().from(workspaces).where(eq(workspaces.ownerId,id)).limit(1);
+  const rows=await (await getDb()).select().from(workspaces).where(eq(workspaces.ownerId,id)).limit(1);
   const previous=rows[0]?.stateJson ?? null;
   return {previous,state:previous===null?structuredClone(blank):normalizeWorkspace(JSON.parse(previous))};
 }
@@ -49,8 +51,8 @@ async function saveWorkspace(id:string,state:Workspace,previous:string|null){
   state.revision++;
   const values={stateJson:JSON.stringify(state),updatedAt:new Date().toISOString()};
   const rows=previous===null
-    ? await getDb().insert(workspaces).values({ownerId:id,...values}).onConflictDoNothing().returning({id:workspaces.ownerId})
-    : await getDb().update(workspaces).set(values).where(and(eq(workspaces.ownerId,id),eq(workspaces.stateJson,previous))).returning({id:workspaces.ownerId});
+    ? await (await getDb()).insert(workspaces).values({ownerId:id,...values}).onConflictDoNothing().returning()
+    : await (await getDb()).update(workspaces).set(values).where(and(eq(workspaces.ownerId,id),eq(workspaces.stateJson,previous))).returning();
   return rows.length===1;
 }
 export async function GET(request:Request){
@@ -69,7 +71,7 @@ export async function GET(request:Request){
       if(query.has("before")) {
         if(query.get("sessionId")!==session.id)return json({error:"تغيرت الجلسة؛ تجاهل التاريخ السابق."},409);
         const before=Number(query.get("before"));
-        if(!Number.isSafeInteger(before)||before<0||before%DURATIONS[timeframe]!==0||before>session.cursorTime+1)
+        if(!Number.isSafeInteger(before)||before<0||(!isEquity(session.symbol)&&before%DURATIONS[timeframe]!==0)||before>session.cursorTime+1)
           return json({error:"حد التاريخ غير صالح."},400);
         try {return json({sessionId:session.id,...await olderHistory(session,timeframe,before,provider)});}
         catch(err){return json({error:err instanceof Error?err.message:"تعذر تحميل التاريخ الأقدم."},502);}
@@ -94,10 +96,13 @@ export async function POST(request:Request){
     let extra:Record<string,unknown>={};
     if(data.action==="start"){
       if(session && state.trades.some(t=>t.sessionId===session!.id) && !data.confirmReplace)return json({error:"أكد بدء جلسة جديدة؛ يبقى السجل القديم محفوظًا."},409);
-      const isOffline = Boolean(data.offline ?? body.offline);
+      const isOffline = !isEquity(data.symbol) && (Boolean(data.offline ?? body.offline) || isNonBinanceSymbol(data.symbol));
       const provider = isOffline ? offlineMarketData : marketData;
       let startTime = Math.floor(data.startTime / 60000) * 60000;
-      if (isOffline) {
+      if (isEquity(data.symbol)) {
+        if (data.latest) startTime = await latestEquityStart(data.symbol);
+        await checkEquityStart(data.symbol,startTime);
+      } else if (isOffline) {
         const bounds = getOfflineDateBounds(data.symbol, body.timeframe ?? "15m");
         if (bounds) {
           if (startTime > bounds.end) startTime = bounds.end;
@@ -110,7 +115,7 @@ export async function POST(request:Request){
         }
         if(startTime < Date.UTC(2017, 7, 17) || startTime > latestAllowed) return json({error:"اختر وقتًا تاريخيًا مكتملًا ضمن فترة توفر Binance."},400);
       }
-      const next:Session={id:crypto.randomUUID(),symbol:data.symbol,startTime,cursorTime:startTime-1,advancedBars:0,createdAt:new Date().toISOString(),isOffline};
+      const next:Session={id:crypto.randomUUID(),symbol:data.symbol,startTime,cursorTime:startTime-1,advancedBars:0,createdAt:new Date().toISOString(),isOffline,engineVersion:2,dataSource:isEquity(data.symbol)?"alpaca-sip-raw":isOffline?"offline":"binance"};
       const timeframe=body.timeframe ?? "15m";
       extra=await chartHistory(next,timeframe,provider);
       state.sessions.unshift(next);state.activeSessionId=next.id;session=next;
@@ -125,7 +130,13 @@ export async function POST(request:Request){
     }else{
       if(!session)return json({error:"ابدأ جلسة Replay أولًا."},409);
       const provider = getProvider(session);
-      if(data.action==="step"){
+      if (isEquity(session.symbol) && session.dataSource!=="alpaca-sip-raw" && ["step","buy","scale_in","close","cancel","risk","stops","takeProfits"].includes(data.action)) return json({error:"جلسة أسهم قديمة محفوظة للقراءة فقط؛ ابدأ جلسة SIP جديدة. لم تتغير نتائجك السابقة."},409);
+      if(data.action==="step" && isEquity(session.symbol)) {
+        const requested=data.unit==="bar" ? Math.min(390,DURATIONS[body.timeframe??"15m"]/60000) : data.count;
+        const result=await equityStep(session,requested,data.unit==="bar" ? body.timeframe??"15m" : undefined);
+        advance(state,result.candles,result.count,Date.now(),result.expected);extra={candles:result.candles,source:result.source};
+      }
+      if(data.action==="step" && !isEquity(session.symbol)){
         const first=session.cursorTime+1;
         const latest = session.isOffline
           ? (getOfflineDateBounds(session.symbol, "1m")?.end ?? Math.floor(Date.now()/60000)*60000-60000)
@@ -138,7 +149,7 @@ export async function POST(request:Request){
       }
       if(data.action==="buy"){
         const equity=(state.initialBalance ?? INITIAL_BALANCE)+state.trades.filter(t=>t.status==="closed").reduce((s,t)=>s+t.realizedPnl,0);
-        const tiedMargin=state.trades.filter(t=>t.sessionId===session!.id&&["pending","open","close_pending"].includes(t.status)).reduce((s,t)=>s+(t.notional??0)*(1+FEE_RATE),0);
+        const tiedMargin=state.trades.filter(t=>t.sessionId===session!.id&&["pending","open","close_pending"].includes(t.status)).reduce((s,t)=>s+((t.notional??0)+(t.pendingScaleIn??0))*(1+FEE_RATE),0);
         const availableCash=Math.max(0, equity - tiedMargin);
         if(data.notional*(1+FEE_RATE)>availableCash)return json({error:`حجم الأمر مع رسوم الدخول يتجاوز الرصيد الحر المتاح (${availableCash.toFixed(2)} USDT).`},400);
 
@@ -152,7 +163,7 @@ export async function POST(request:Request){
         if(data.orderType==="stop" && sign*(level-current)<=0)return json({error:"سعر التفعيل: فوق السعر الحالي للشراء، وتحته للبيع."},400);
 
         const trade:Trade={
-          id:crypto.randomUUID(),sessionId:session.id,symbol:session.symbol,status:"pending",side:data.side,
+          id:crypto.randomUUID(),sessionId:session.id,symbol:session.symbol,status:"pending",side:data.side,feeRate:FEE_RATE,
           referencePrice:level,orderType:data.orderType,orderPrice:data.orderType==="market"?null:level,
           eligibleTime:session.cursorTime+1,triggeredAt:null,notional:data.notional,quantity:null,entryPrice:null,
           stopLoss:data.stopLoss,takeProfit:data.takeProfit,initialStop:null,initialTarget:null,exitPrice:null,
@@ -170,10 +181,15 @@ export async function POST(request:Request){
         if(!data.amount || data.amount<=0)return json({error:"حدد مبلغ تعزيز صحيح."},400);
 
         const equity=(state.initialBalance ?? INITIAL_BALANCE)+state.trades.filter(t=>t.status==="closed").reduce((s,t)=>s+t.realizedPnl,0);
-        const tiedMargin=state.trades.filter(t=>t.sessionId===session!.id&&["pending","open","close_pending"].includes(t.status)).reduce((s,t)=>s+(t.notional??0)*(1+FEE_RATE),0);
+        const tiedMargin=state.trades.filter(t=>t.sessionId===session!.id&&["pending","open","close_pending"].includes(t.status)).reduce((s,t)=>s+((t.notional??0)+(t.pendingScaleIn??0))*(1+FEE_RATE),0);
         const availableCash=Math.max(0, equity - tiedMargin);
         if(data.amount*(1+FEE_RATE)>availableCash)return json({error:`مبلغ التعزيز مع الرسوم يتجاوز الرصيد الحر المتاح (${availableCash.toFixed(2)} USDT).`},400);
 
+        if(session.engineVersion===2 && (trade.partialExits?.length??0)>0) return json({error:"التعزيز بعد خروج جزئي غير مدعوم؛ افتح صفقة مستقلة للحفاظ على المحاسبة."},400);
+        if(session.engineVersion===2) {
+          trade.pendingScaleIn=(trade.pendingScaleIn??0)+data.amount;
+          event(trade,"scale-pending",session.cursorTime,"طلب تعزيز عند الافتتاح التالي.");
+        } else {
         const last=await provider(session.symbol,"1m",session.cursorTime-59999,session.cursorTime);
         const current=last.candles.at(-1)?.close;
         if(!current)throw new MarketError("تعذر التحقق من السعر الحالي للتعزيز.");
@@ -195,6 +211,7 @@ export async function POST(request:Request){
         trade.initialRisk = Math.abs(newWeightedEntry - trade.stopLoss) * newTotalQty;
         event(trade,"scaled_in",session.cursorTime,`تعزيز الصفقة: إضافة ${data.amount} USDT بسعر ${fillPrice.toFixed(2)} · متوسط الدخول الجديد: ${newWeightedEntry.toFixed(2)}`);
       }
+      }
       if(data.action==="cancel"||data.action==="close"){
         const activeTrades=state.trades.filter(t=>t.sessionId===session!.id&&["pending","open","close_pending"].includes(t.status));
         if(!activeTrades.length)return json({error:"لا توجد صفقات أو أوامر نشطة للإلغاء أو الإغلاق."},409);
@@ -207,13 +224,16 @@ export async function POST(request:Request){
 
         if(!targets.length)return json({error:"الصفقة المحددة غير موجودة أو تم إغلاقها بالفعل."},404);
 
-        const last=await provider(session.symbol,"1m",session.cursorTime-59999,session.cursorTime);
-        const current=last.candles.at(-1)?.close;
+        const last=session.engineVersion===2 ? null : await provider(session.symbol,"1m",session.cursorTime-59999,session.cursorTime);
+        const current=last?.candles.at(-1)?.close;
 
         for(const trade of targets){
           if(trade.status==="pending"){
             trade.status="cancelled";
             event(trade,trade.status,session.cursorTime,"إلغاء الأمر فوراً");
+          } else if (session.engineVersion===2) {
+            delete trade.pendingScaleIn; trade.status="close_pending";
+            event(trade,"close-pending",session.cursorTime,"إغلاق عند الافتتاح التالي، دون تنفيذ بأثر رجعي.");
           } else {
             const sign=trade.side==="short"?-1:1;
             const fillPrice=current?current*(1-sign*SLIPPAGE):(trade.entryPrice??trade.orderPrice??1);

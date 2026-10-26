@@ -20,6 +20,7 @@ interface SessionProfileOverlayProps {
   highlightPoc?: boolean;
   grouping?: SessionGrouping;
   widthScale?: number;
+  timezone?: string;
 }
 
 export default function SessionProfileOverlay({
@@ -32,6 +33,7 @@ export default function SessionProfileOverlay({
   highlightPoc = true,
   grouping = "auto",
   widthScale = 1.0,
+  timezone = "UTC",
 }: SessionProfileOverlayProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoveredInfo, setHoveredInfo] = useState<{
@@ -44,8 +46,8 @@ export default function SessionProfileOverlay({
   const sessions = useMemo(() => {
     if (!visible || !candles.length) return [];
     // Compute profiles with 36 price buckets and standard 70% Value Area
-    return computeDailySessionProfiles(candles, 36, 0.70, timeframe, grouping);
-  }, [candles, visible, timeframe, grouping]);
+    return computeDailySessionProfiles(candles, 36, 0.70, timeframe, grouping, timezone);
+  }, [candles, visible, timeframe, grouping, timezone]);
 
   // Synchronize SVG elements with chart coordinates on render, pan, and zoom
   useEffect(() => {

@@ -1,4 +1,5 @@
 import {headers} from 'next/headers';
+import {requestOwner} from '@/lib/personal-auth';
 import {getDb} from '@/db';
 import {workspaces} from '@/db/schema';
 import {eq} from 'drizzle-orm';
@@ -10,11 +11,11 @@ export const dynamic='force-dynamic';
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
 export async function GET(request:Request){
  try{
-  const h=await headers(),id=h.get('oai-authenticated-user-id')||(process.env.NODE_ENV!=='production'?'preview-owner':null);
+  const id=requestOwner(await headers());
   if(!id)return json({error:'يرجى تسجيل الدخول'},401);
   const q=new URL(request.url).searchParams,cursor=Number(q.get('cursor')),hours=Number(q.get('hours')||24);
   if(!Number.isSafeInteger(cursor)||cursor<Date.UTC(2017,0,1)||cursor>Date.now()||![1,6,24,72,168].includes(hours))return json({error:'وقت فحص غير صالح'},400);
-  const row=await getDb().select().from(workspaces).where(eq(workspaces.ownerId,id)).limit(1);
+  const row=await (await getDb()).select().from(workspaces).where(eq(workspaces.ownerId,id)).limit(1);
   const session=row[0]?activeSession(normalizeWorkspace(JSON.parse(row[0].stateJson))):null;
   if(!session||session.id!==q.get('sessionId')||cursor>session.cursorTime)return json({error:'تغيرت الجلسة؛ أعد الفحص'},409);
   const records:NewsRecord[]=[...verifiedReports],coverage:NewsCoverage[]=[];

@@ -1,7 +1,7 @@
 export const FEE_RATE = 0.0015;
 export const SLIPPAGE = 0.0002;
 export const INITIAL_BALANCE = 2500;
-export const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUTUSDT"] as const;
+export const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUTUSDT", "AAPL", "NVDA", "AMD", "GOOGL", "PAXGUSDT"] as const;
 export const DURATIONS = { "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000, "4h": 14400000, "1d": 86400000 };
 export type Timeframe = keyof typeof DURATIONS;
 export type SymbolName = typeof SYMBOLS[number];
@@ -59,6 +59,56 @@ export const SYMBOL_INFO: Record<
     digits: 2,
     description: "ذهب رقمي معتمد مدعوم بأونصة ذهب حقيقي",
   },
+  AAPL: {
+    icon: "🍎",
+    name: "Apple Inc.",
+    arabicName: "أبل",
+    base: "AAPL",
+    quote: "USD",
+    digits: 2,
+    badgeColor: "#a1a1aa",
+    description: "عملاق التكنولوجيا وأعلى سيولة مؤسسية متوازنة",
+  },
+  NVDA: {
+    icon: "🟢",
+    name: "NVIDIA Corporation",
+    arabicName: "إنفيديا",
+    base: "NVDA",
+    quote: "USD",
+    digits: 2,
+    badgeColor: "#22c55e",
+    description: "محرك الذكاء الاصطناعي وصفقات الكسر المؤسسي",
+  },
+  AMD: {
+    icon: "🔴",
+    name: "Advanced Micro Devices",
+    arabicName: "إيه إم دي",
+    base: "AMD",
+    quote: "USD",
+    digits: 2,
+    badgeColor: "#ef4444",
+    description: "سهم الزخم عالي التذبذب والألفا السريعة",
+  },
+  GOOGL: {
+    icon: "🔵",
+    name: "Alphabet Inc.",
+    arabicName: "جوجل / ألفابت",
+    base: "GOOGL",
+    quote: "USD",
+    digits: 2,
+    badgeColor: "#3b82f6",
+    description: "عملاق البحث والسيولة المستقرة",
+  },
+  PAXGUSDT: {
+    icon: "🪙",
+    name: "Paxos Gold",
+    arabicName: "ذهب باكسوس الفوري (PAXG)",
+    base: "PAXG",
+    quote: "USDT",
+    digits: 2,
+    badgeColor: "#eab308",
+    description: "ذهب فوري رقمي معتمد مدعوم بأونصة ذهب فيزيائي حقيقي",
+  },
 };
 export type TradeSide = "long" | "short";
 export type OrderType = "market" | "limit" | "stop";
@@ -73,7 +123,7 @@ export type Candle = {
   takerBuyVolume?: number;
   tradeCount?: number;
 };
-export type Session = { id: string; symbol: SymbolName; startTime: number; cursorTime: number; advancedBars: number; createdAt: string; isOffline?: boolean };
+export type Session = { id: string; symbol: SymbolName; startTime: number; cursorTime: number; advancedBars: number; createdAt: string; isOffline?: boolean; engineVersion?: 2; dataSource?: string };
 export type TradeEvent = { kind: string; time: number; detail: string };
 
 export type TradeReflection = {
@@ -87,6 +137,8 @@ export type TradeReflection = {
 };
 
 export type Trade = {
+  pendingScaleIn?: number;
+  feeRate?: number;
   remainingQuantity?: number;
   stopLevels?: {id:string;price:number;amount:number;eligibleTime:number;filled:boolean}[];
   takeProfitLevels?: {id:string;price:number;amount:number;percentage?:number;eligibleTime:number;filled:boolean}[];
@@ -126,9 +178,10 @@ export function normalizeWorkspace(raw: Partial<Workspace>): Workspace {
 export function activeSession(state: Workspace) { return state.sessions.find(s => s.id === state.activeSessionId) ?? null; }
 export function event(trade: Trade, kind: string, time: number, detail: string) { trade.events.push({ kind, time, detail }); }
 export function validCandle(c: Candle, duration: number) {
+  const isAligned = c.openTime % duration === 0 || (duration >= 3600000 && c.openTime % 60000 === 0);
   return [c.openTime, c.closeTime, c.open, c.high, c.low, c.close, c.volume].every(Number.isFinite) &&
     (c.takerBuyVolume === undefined || Number.isFinite(c.takerBuyVolume)) &&
-    c.openTime % duration === 0 && c.closeTime === c.openTime + duration - 1 &&
+    isAligned && c.closeTime === c.openTime + duration - 1 &&
     Math.min(c.open, c.high, c.low, c.close) > 0 && c.volume >= 0 && c.high >= Math.max(c.open,c.close,c.low) && c.low <= Math.min(c.open,c.close,c.high);
 }
 export function validateMinutes(candles: Candle[], first: number, count: number, now = Date.now()) {
@@ -138,10 +191,12 @@ export function validateMinutes(candles: Candle[], first: number, count: number,
 export function appendReplayCandle(current: Candle[], minute: Candle, timeframe: Timeframe) {
   return appendReplayBatch(current, [minute], timeframe);
 }
-export function appendReplayBatch(current: Candle[], minutes: Candle[], timeframe: Timeframe) {
+export function appendReplayBatch(current: Candle[], minutes: Candle[], timeframe: Timeframe, equity = false) {
   const result = current.slice();
   for (const minute of minutes) {
-  const start = Math.floor(minute.openTime / DURATIONS[timeframe]) * DURATIONS[timeframe];
+  const parts = equity ? new Intl.DateTimeFormat("en-US", {timeZone:"America/New_York",hourCycle:"h23",hour:"2-digit",minute:"2-digit"}).formatToParts(minute.openTime) : [];
+  const origin = equity ? minute.openTime - (Number(parts.find(p=>p.type==="hour")!.value)*60 + Number(parts.find(p=>p.type==="minute")!.value) - 570)*60000 : 0;
+  const start = origin + Math.floor((minute.openTime-origin) / DURATIONS[timeframe]) * DURATIONS[timeframe];
   const previous = result.at(-1);
   if (previous && minute.closeTime <= previous.closeTime) continue;
   if (previous?.openTime === start) result[result.length-1] = {
@@ -166,7 +221,7 @@ export function finishTrade(t: Trade, fill: number, time: number, reason: string
   if (t.entryPrice === null || t.quantity === null) return;
   const remaining = t.remainingQuantity ?? t.quantity;
   const previous = t.partialExits ?? [];
-  const fee = fill * remaining * FEE_RATE;
+  const fee = fill * remaining * (t.feeRate ?? FEE_RATE);
   const sign = t.side === "short" ? -1 : 1;
   const grossThisExit = sign * (fill - t.entryPrice) * remaining;
   const allocatedEntryFee = t.entryFee * remaining / t.quantity;
@@ -207,7 +262,7 @@ export function applyCandle(state: Workspace, session: Session, c: Candle) {
       if (sign*(fill-t.stopLoss)<=0 || sign*(t.takeProfit-fill)<=0) {
         t.status="cancelled"; event(t,"cancelled",c.openTime,"فجوة السعر جعلت الوقف أو الهدف غير صالح عند التعبئة"); continue;
       }
-      t.entryPrice=fill; t.quantity=t.notional/fill; t.entryFee=t.notional*FEE_RATE;
+      t.entryPrice=fill; t.quantity=t.notional/fill; t.entryFee=t.notional*(t.feeRate ?? FEE_RATE);
       t.initialRisk=sign*(fill-t.stopLoss)*t.quantity; t.initialStop=t.stopLoss; t.initialTarget=t.takeProfit;
       t.entryTime=c.openTime; t.status="open";
       event(t,"filled",c.openTime,`${fill}${intrabarEntry ? " · تنفيذ داخل الدقيقة؛ ترتيب الحركة غير معلوم" : " · افتتاح الدقيقة"}`);
@@ -215,19 +270,40 @@ export function applyCandle(state: Workspace, session: Session, c: Candle) {
     if (t.status === "close_pending") { finishTrade(t,c.open*(1-sign*SLIPPAGE),c.openTime,"إغلاق يدوي"); continue; }
     if (t.status !== "open") continue;
 
+    if (session.engineVersion === 2 && t.pendingScaleIn) {
+      const amount=t.pendingScaleIn; delete t.pendingScaleIn;
+      if ((t.partialExits?.length ?? 0)>0) event(t,"scale-cancelled",c.openTime,"ألغي التعزيز بعد خروج جزئي؛ حساب اللوتات غير مدعوم.");
+      else {
+        const fill=c.open*(1+sign*SLIPPAGE), old=t.quantity!, added=amount/fill;
+        t.entryPrice=(t.entryPrice!*old+amount)/(old+added); t.quantity=old+added; t.remainingQuantity=t.quantity;
+        t.notional+=amount; t.entryFee+=amount*(t.feeRate??FEE_RATE);
+        t.initialRisk=(t.initialRisk??0)+Math.max(0,sign*(fill-t.stopLoss))*added;
+        event(t,"scaled-in",c.openTime,"تعزيز عند الافتتاح التالي مع انزلاق تقديري.");
+      }
+    }
+    const conservative = session.engineVersion === 2;
+    const stopTouched = short ? c.high>=t.stopLoss : c.low<=t.stopLoss;
+    const partialStopTouched = (t.stopLevels??[]).some(x=>!x.filled&&x.eligibleTime<=c.openTime&&(short?c.high>=x.price:c.low<=x.price));
+    const targetTouched = (short?c.low<=t.takeProfit:c.high>=t.takeProfit) || (t.takeProfitLevels??[]).some(x=>!x.filled&&x.eligibleTime<=c.openTime&&(short?c.low<=x.price:c.high>=x.price));
+    if (conservative && targetTouched && (stopTouched || partialStopTouched || intrabarEntry)) event(t,"ambiguous",c.closeTime,"ترتيب الحركة داخل الدقيقة غير معلوم؛ سياسة محافظة: مخارج الخسارة أولًا ولا أرباح لدخول داخل الدقيقة.");
+    if (conservative && stopTouched) {
+      finishTrade(t,(intrabarEntry?t.stopLoss:short?Math.max(c.open,t.stopLoss):Math.min(c.open,t.stopLoss))*(1-sign*SLIPPAGE),c.closeTime,"وقف الخسارة"); continue;
+    }
     // Partial Take Profit Levels (سحب وجني الأرباح المجزأ)
     const tpLevels=(t.takeProfitLevels??[]).filter(x=>!x.filled&&x.eligibleTime<=c.openTime&&sign*(x.price-(t.entryPrice??0))>0)
       .sort((a,b)=>sign*(a.price-b.price));
     for(const level of tpLevels) {
+      if(conservative && (partialStopTouched || intrabarEntry)) continue;
       if(!(short?c.low<=level.price:c.high>=level.price)) continue;
       const remaining=t.remainingQuantity??t.quantity!;
       if(remaining<=1e-12) break;
       const quantity=Math.min(remaining,level.amount/t.entryPrice!);
-      const fill=(intrabarEntry?level.price:short?Math.min(c.open,level.price):Math.max(c.open,level.price))*(1-sign*SLIPPAGE);
+      const rawFill=(intrabarEntry?level.price:short?Math.min(c.open,level.price):Math.max(c.open,level.price))*(1-sign*SLIPPAGE);
+      const fill=conservative?(short?Math.min(level.price,rawFill):Math.max(level.price,rawFill)):rawFill;
       level.filled=true;
       if(quantity>=remaining-1e-12) {finishTrade(t,fill,c.closeTime,`سحب الأرباح بالكامل عند ${level.price}`);break;}
       const gross=sign*(fill-t.entryPrice!)*quantity;
-      const fee=fill*quantity*FEE_RATE;
+      const fee=fill*quantity*(t.feeRate ?? FEE_RATE);
       const allocatedEntryFee=t.entryFee*quantity/t.quantity!;
       const pnl=gross-allocatedEntryFee-fee;
       (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,grossPnl:gross,time:c.closeTime,type:"take-profit-partial"});
@@ -250,7 +326,7 @@ export function applyCandle(state: Workspace, session: Session, c: Candle) {
       level.filled=true;partialStopHit=true;
       if(quantity>=remaining-1e-12) {finishTrade(t,fill,c.closeTime,"الوقف الجزئي الأخير");break;}
       const gross=sign*(fill-t.entryPrice!)*quantity;
-      const fee=fill*quantity*FEE_RATE;
+      const fee=fill*quantity*(t.feeRate ?? FEE_RATE);
       const allocatedEntryFee=t.entryFee*quantity/t.quantity!;
       const pnl=gross-allocatedEntryFee-fee;
       (t.partialExits??=[]).push({price:fill,quantity,fee,pnl,grossPnl:gross,time:c.closeTime,type:"partial-stop"});
@@ -271,9 +347,11 @@ export function applyCandle(state: Workspace, session: Session, c: Candle) {
     // Unknown intrabar ordering: stop-first; never credit an entry-bar target for an intrabar fill.
   }
 }
-export function advance(state: Workspace, candles: Candle[], count: number, now = Date.now()) {
+export function advance(state: Workspace, candles: Candle[], count: number, now = Date.now(), expectedTimes?: number[]) {
   const session=activeSession(state);
   if (!session) throw new Error("ابدأ جلسة أولًا.");
-  validateMinutes(candles,session.cursorTime+1,count,now);
+  if (session.dataSource === "alpaca-sip-raw") {
+    if (!expectedTimes || expectedTimes.length!==count || candles.length!==count || candles.some((c,i)=>!validCandle(c,60000)||c.openTime!==expectedTimes[i]||c.openTime<=session.cursorTime||c.closeTime>=now||(i>0&&c.openTime<=candles[i-1].openTime))) throw new Error("خطة دقائق الأسهم ناقصة أو غير صالحة؛ لم يتغير وقت المحاكاة.");
+  } else validateMinutes(candles,session.cursorTime+1,count,now);
   for (const c of candles) { applyCandle(state,session,c); session.cursorTime=c.closeTime; session.advancedBars++; }
 }
