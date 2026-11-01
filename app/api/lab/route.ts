@@ -3,11 +3,11 @@ import { macroAt } from "@/lib/macro";
 import { validateStopLevels, validateTakeProfitLevels } from "@/lib/stop-levels";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
-import { requestOwner } from "@/lib/personal-auth";
+import { requestOwner, privateHosting, sameOrigin } from "@/lib/personal-auth";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { workspaces } from "@/db/schema";
-import { activeSession, advance, blank, event, FEE_RATE, INITIAL_BALANCE, normalizeWorkspace, SYMBOLS, DURATIONS, finishTrade, SLIPPAGE, type Workspace, type Trade, type Session, type Timeframe } from "@/lib/replay";
+import { activeSession, availableReplayCash, advance, blank, event, FEE_RATE, INITIAL_BALANCE, normalizeWorkspace, SYMBOLS, DURATIONS, finishTrade, SLIPPAGE, type Workspace, type Trade, type Session, type Timeframe } from "@/lib/replay";
 import { chartHistory, olderHistory, marketData, MarketError, isNonBinanceSymbol } from "@/lib/market-data";
 import { offlineMarketData, getOfflineSummary, getOfflineDateBounds } from "@/lib/offline-market";
 
@@ -84,6 +84,7 @@ export async function GET(request:Request){
 }
 export async function POST(request:Request){
   try{
+    if(privateHosting() && !sameOrigin(request))return json({error:"طلب من مصدر غير مسموح."},403);
     const id=await ownerId();if(!id)return json({error:"يرجى تسجيل الدخول."},401);
     const envelope=z.object({revision:z.number().int().nonnegative(),timeframe:z.enum(["1m","5m","15m","1h","4h","1d"]).optional(),offline:z.boolean().optional()}).passthrough().safeParse(await request.json());
     if(!envelope.success)return json({error:"حدّث الصفحة ثم أعد المحاولة."},400);
@@ -148,9 +149,7 @@ export async function POST(request:Request){
         advance(state,result.candles,count);extra=result;
       }
       if(data.action==="buy"){
-        const equity=(state.initialBalance ?? INITIAL_BALANCE)+state.trades.filter(t=>t.status==="closed").reduce((s,t)=>s+t.realizedPnl,0);
-        const tiedMargin=state.trades.filter(t=>t.sessionId===session!.id&&["pending","open","close_pending"].includes(t.status)).reduce((s,t)=>s+((t.notional??0)+(t.pendingScaleIn??0))*(1+FEE_RATE),0);
-        const availableCash=Math.max(0, equity - tiedMargin);
+        const availableCash=availableReplayCash(state,session.id);
         if(data.notional*(1+FEE_RATE)>availableCash)return json({error:`حجم الأمر مع رسوم الدخول يتجاوز الرصيد الحر المتاح (${availableCash.toFixed(2)} USDT).`},400);
 
         const last=await provider(session.symbol,"1m",session.cursorTime-59999,session.cursorTime);
@@ -180,9 +179,7 @@ export async function POST(request:Request){
         if(!trade)return json({error:"الصفقة المفتوحة للتعزيز غير موجودة."},404);
         if(!data.amount || data.amount<=0)return json({error:"حدد مبلغ تعزيز صحيح."},400);
 
-        const equity=(state.initialBalance ?? INITIAL_BALANCE)+state.trades.filter(t=>t.status==="closed").reduce((s,t)=>s+t.realizedPnl,0);
-        const tiedMargin=state.trades.filter(t=>t.sessionId===session!.id&&["pending","open","close_pending"].includes(t.status)).reduce((s,t)=>s+((t.notional??0)+(t.pendingScaleIn??0))*(1+FEE_RATE),0);
-        const availableCash=Math.max(0, equity - tiedMargin);
+        const availableCash=availableReplayCash(state,session.id);
         if(data.amount*(1+FEE_RATE)>availableCash)return json({error:`مبلغ التعزيز مع الرسوم يتجاوز الرصيد الحر المتاح (${availableCash.toFixed(2)} USDT).`},400);
 
         if(session.engineVersion===2 && (trade.partialExits?.length??0)>0) return json({error:"التعزيز بعد خروج جزئي غير مدعوم؛ افتح صفقة مستقلة للحفاظ على المحاسبة."},400);

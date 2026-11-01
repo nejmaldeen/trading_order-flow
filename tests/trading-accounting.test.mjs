@@ -6,8 +6,15 @@ import {
   applyCandle,
   finishTrade,
   blank,
+  availableReplayCash,
 } from "../lib/replay.ts";
 import { validateTakeProfitLevels, validateStopLevels } from "../lib/stop-levels.ts";
+
+test('cash releases partial exits and reserves queued scale-in identically for client and server',()=>{
+  const state={...structuredClone(blank),initialBalance:1000,trades:[{sessionId:'s',status:'open',notional:1000,entryPrice:100,quantity:10,remainingQuantity:5,entryFee:1.5,realizedPnl:49,pendingScaleIn:100}]};
+  assert.equal(availableReplayCash(state,'s'),1049-500-.75-100.15);
+  assert.equal(state.trades[0].realizedPnl,49);
+});
 
 test("accounting: Long trade gross PnL, deducted fees, and net realized PnL", () => {
   const entryPrice = 100000;

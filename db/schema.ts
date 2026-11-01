@@ -1,4 +1,10 @@
-import { sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+
+export const loginAttempts = sqliteTable("login_attempts", {
+  id: text("id").primaryKey(),
+  windowStart: integer("window_start").notNull(),
+  attempts: integer("attempts").notNull(),
+});
 
 export const workspaces = sqliteTable("trading_workspaces", {
   ownerId: text("owner_id").primaryKey(),

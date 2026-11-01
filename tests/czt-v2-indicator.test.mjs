@@ -3,6 +3,23 @@ import assert from "node:assert/strict";
 import { calculateCztV2, DEFAULT_CZT_V2_CONFIG } from "../lib/czt-v2-indicator.ts";
 import { offlineMarketData, getOfflineSummary } from "../lib/offline-market.ts";
 import { marketData } from "../lib/market-data.ts";
+import { generateInstitutionalSnapshot } from '../lib/institutional-hub.ts';
+
+test('illustrative radar is deterministic in replay and uses the previous trading day across weekends',()=>{
+  const candle=(date,high)=>({openTime:Date.parse(date+'T13:30:00Z'),closeTime:Date.parse(date+'T13:31:00Z')-1,open:100,high,low:99,close:101,volume:10});
+  const candles=[candle('2026-09-04',110),candle('2026-09-08',102)];
+  const a=generateInstitutionalSnapshot(candles),b=generateInstitutionalSnapshot(candles);
+  assert.deepEqual(a,b);assert.equal(a.sessionOpens.previousDayHigh,110);
+  assert.equal(a.bookmap.status,'standby');assert.equal(a.bookmap.pingMs,0);
+  assert.ok(a.bookmap.data.icebergOrders.every(x=>x.time<=candles.at(-1).closeTime));
+});
+
+test('CZT signals, ATR and EMA prefix do not change when later candles are appended',()=>{
+  const candles=Array.from({length:180},(_,i)=>({openTime:Date.UTC(2026,7,19,13,30)+i*60000,closeTime:Date.UTC(2026,7,19,13,31)+i*60000-1,open:100+i*.1,high:102+i*.1,low:99+i*.1,close:101+i*.1,volume:1000+i}));
+  const prefix=calculateCztV2(candles.slice(0,120)),full=calculateCztV2(candles);
+  assert.deepEqual(full.bars.slice(0,120),prefix.bars);
+  assert.deepEqual(full.markers.filter(m=>m.time<=prefix.latest.time),prefix.markers);
+});
 
 test("CZT V2 Indicator: calculates VAH, VAL, POC, and EMA100 on mock data", () => {
   const candles = [];

@@ -176,6 +176,17 @@ export function normalizeWorkspace(raw: Partial<Workspace>): Workspace {
     }) };
 }
 export function activeSession(state: Workspace) { return state.sessions.find(s => s.id === state.activeSessionId) ?? null; }
+// One cash calculation for the API and UI; partial exits release their allocated
+// principal and fees, while queued additions reserve cash until the next open.
+export function availableReplayCash(state: Workspace, sessionId: string) {
+  const equity = (state.initialBalance ?? INITIAL_BALANCE) + state.trades.reduce((sum,t)=>sum+t.realizedPnl,0);
+  const reserved = state.trades.filter(t=>t.sessionId===sessionId && ['pending','open','close_pending'].includes(t.status)).reduce((sum,t)=>{
+    const remaining=t.remainingQuantity ?? t.quantity ?? 0;
+    const cost=t.entryPrice && t.quantity ? remaining*t.entryPrice+t.entryFee*remaining/t.quantity : t.notional*(1+(t.feeRate??FEE_RATE));
+    return sum+cost+(t.pendingScaleIn??0)*(1+(t.feeRate??FEE_RATE));
+  },0);
+  return Math.max(0,equity-reserved);
+}
 export function event(trade: Trade, kind: string, time: number, detail: string) { trade.events.push({ kind, time, detail }); }
 export function validCandle(c: Candle, duration: number) {
   const isAligned = c.openTime % duration === 0 || (duration >= 3600000 && c.openTime % 60000 === 0);

@@ -37,13 +37,14 @@ export function getUtcWeekKey(timestamp: number): string {
   const dayNr = (target.getUTCDay() + 6) % 7;
   target.setUTCDate(target.getUTCDate() - dayNr + 3);
   const firstThursday = target.getTime();
+  const weekYear = target.getUTCFullYear();
   target.setUTCMonth(0, 1);
   if (target.getUTCDay() !== 4) {
     target.setUTCMonth(0, 1 + ((4 - target.getUTCDay()) + 7) % 7);
   }
   const weekNr = 1 + Math.ceil((firstThursday - target.getTime()) / 604800000);
 
-  return `${monday.getUTCFullYear()}-W${String(weekNr).padStart(2, "0")}`;
+  return `${weekYear}-W${String(weekNr).padStart(2, "0")}`;
 }
 
 /**
@@ -80,8 +81,9 @@ export function computeDailySessionProfiles(
   }
 
   const sessionMap = new Map<string, Candle[]>();
+  const sessionFormatter = new Intl.DateTimeFormat("en-CA",{timeZone:timezone,year:"numeric",month:"2-digit",day:"2-digit"});
   for (const c of candles) {
-    const sessionDate = new Intl.DateTimeFormat("en-CA",{timeZone:timezone,year:"numeric",month:"2-digit",day:"2-digit"}).format(c.openTime);
+    const sessionDate = sessionFormatter.format(c.openTime);
     const dateTime=Date.parse(sessionDate+"T12:00:00Z");
     let key: string;
     if (resolvedGrouping === "week") {

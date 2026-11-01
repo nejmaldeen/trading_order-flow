@@ -211,7 +211,7 @@ export default function InstitutionalHud({
                 color: "#f8fafc",
               }}
             >
-              الرادار المؤسساتي الموحد
+              الرادار التقديري · ليس اتصالًا بالمنصات
             </span>
           </div>
 
@@ -226,15 +226,15 @@ export default function InstitutionalHud({
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#94a3b8" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ color: "#38bdf8", fontWeight: 600 }}>Bookmap</span>
+              <span style={{ color: "#38bdf8", fontWeight: 600 }}>Bookmap تقديري</span>
               <span style={{ color: "#34d399", fontSize: 9 }}>●</span>
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ color: "#fbbf24", fontWeight: 600 }}>ATAS</span>
+              <span style={{ color: "#fbbf24", fontWeight: 600 }}>ATAS تقديري</span>
               <span style={{ color: "#34d399", fontSize: 9 }}>●</span>
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ color: "#a855f7", fontWeight: 600 }}>Coinglass</span>
+              <span style={{ color: "#a855f7", fontWeight: 600 }}>Coinglass تقديري</span>
               <span style={{ color: "#34d399", fontSize: 9 }}>●</span>
             </span>
           </div>
@@ -800,11 +800,11 @@ export default function InstitutionalHud({
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
                     <Zap size={14} color="#38bdf8" />
                     <strong style={{ fontSize: 12, color: "#38bdf8" }}>
-                      رصد أمر مخفي حقيقي (Iceberg Order Detected)
+                      إشارة تقديرية لاحتمال امتصاص (ليست رصد أمر مخفي)
                     </strong>
                   </div>
                   <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.4 }}>
-                    تم رصد أمر آيسبيرج شراء مخفي عند سعر{" "}
+                    مثال توضيحي لسيولة محتملة عند سعر{" "}
                     <b style={{ color: "#f8fafc", fontFamily: "monospace" }}>
                       ${snapshot.bookmap.data.icebergOrders[0].price.toFixed(2)}
                     </b>{" "}
@@ -974,7 +974,7 @@ export default function InstitutionalHud({
               color: "#64748b",
             }}
           >
-            <span>استجابة الربط: {snapshot[activeTab].pingMs}ms</span>
+            <span>تقديرات توضيحية من OHLCV · لا اتصال مباشر أو قياس L3</span>
             <span style={{ display: "flex", alignItems: "center", gap: 4, color: "#10b981" }}>
               <CheckCircle2 size={11} /> متصل بالبث المؤسساتي
             </span>

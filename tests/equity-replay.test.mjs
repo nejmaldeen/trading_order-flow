@@ -82,7 +82,7 @@ test('provider completes pagination, fixes SIP/raw and caches repeated steps',as
   },[row(T),row(T+60000)]);
 });
 test('provider rejects duplicate and missing minutes without accepting partial pages',async()=>{
-  for(const rows of [[row(T),row(T)],[row(T)]]) await fixture(async(api)=>{await assert.rejects(api.checkEquityStart('AMD',T));},rows);
+  for(const rows of [[row(T),row(T)],[row(T)]]) await fixture(async(api)=>{await assert.rejects(api.equityStep({...session(T),symbol:'AMD'},2));},rows);
 });
 test('provider rejects invalid OHLC and repeated pagination tokens',async()=>{
   await fixture(async(api)=>{await assert.rejects(api.checkEquityStart('NVDA',T));},[row(T,{h:90}),row(T+60000)]);
@@ -108,4 +108,48 @@ test('equities cannot silently fall back to bundled synthetic data',()=>{
   const pack=JSON.parse(readFileSync(new URL('../data/offline-pack.json',import.meta.url)));
   for(const s of ['AAPL','NVDA','AMD','GOOGL'])assert.equal(pack.symbols[s],undefined);
   for(const s of ['BTCUSDT','ETHUSDT','SOLUSDT','XAUTUSDT','PAXGUSDT'])assert.ok(pack.symbols[s]);
+});
+
+test('a later missing minute cannot block an earlier complete execution range',async()=>{
+  await fixture(async(api)=>{
+    const result=await api.equityStep(session(T),1);
+    assert.equal(result.candles[0].openTime,T);
+    await assert.rejects(api.equityStep({...session(T),cursorTime:T+59999},1),/2026-08-19T13:31/);
+  },[row(T)]);
+});
+
+test('missing start inside an open session is not mislabeled as a market closure',async()=>{
+  await fixture(async(api)=>{
+    await assert.rejects(api.checkEquityStart('AAPL',T+60000),/دقيقة RTH غير متاحة/);
+  },[row(T)]);
+});
+
+test('range expansion ignores calendar sessions beyond the current query end',async()=>{
+  const friday=Date.parse('2026-09-04T19:59:00Z'),tuesday=Date.parse('2026-09-08T13:30:00Z');
+  await fixture(async(api)=>{
+    const result=await api.equityStep(session(friday),2);
+    assert.deepEqual(result.candles.map(c=>c.openTime),[friday,tuesday]);
+  },[row(friday),row(tuesday)],[{date:'2026-09-04',open:'09:30',close:'16:00'},{date:'2026-09-08',open:'09:30',close:'16:00'}]);
+});
+
+test('a 90-day chart window fits the bounded cache without refetching every block',async()=>{
+  const originalNow=Date.now;let tick=0;const now=originalNow();Date.now=()=>now+(++tick)*400;
+  try {
+    await fixture(async(api,calls)=>{
+      const start=T-90*86400000;
+      await api.equityRange('AAPL',start,T);const first=calls.length;
+      await api.equityRange('AAPL',start,T);assert.equal(calls.length,first);
+    },[],[],()=>Response.json({bars:[],next_page_token:null}));
+  } finally {Date.now=originalNow;}
+});
+
+test('history rejects a gap only in the displayed range and all frames match incremental bars',async()=>{
+  await fixture(async(api)=>{
+    await assert.rejects(api.equityHistory({...session(T),cursorTime:T+119999},'1m'),/2026-08-19T13:31/);
+  },[row(T)]);
+  const minutes=Array.from({length:390},(_,i)=>minute(T+i*60000));
+  for(const frame of ['1m','5m','15m','1h','4h','1d']) {
+    const expected=aggregateEquity(minutes,frame,[{date:'2026-08-19',open:T,close:T+390*60000}]);
+    assert.deepEqual(JSON.parse(JSON.stringify(appendReplayBatch([],minutes,frame,true))),expected);
+  }
 });
