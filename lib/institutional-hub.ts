@@ -4,7 +4,7 @@
  */
 
 import type { Candle } from "@/lib/replay";
-import { computeVolumeProfile } from "@/lib/volume-profile";
+import { computeVolumeProfile } from "./volume-profile.ts";
 import type { InstitutionalChartConfig } from "@/lib/institutional-chart-types";
 
 export type PlatformId = "coinglass" | "bookmap" | "atas";

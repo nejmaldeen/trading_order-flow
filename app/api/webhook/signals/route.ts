@@ -43,8 +43,8 @@ export async function POST(request: Request) {
 
 export async function GET() {
   return NextResponse.json({
-    status: "active",
+    status: "diagnostic-only",
     endpoint: "/api/webhook/signals",
-    description: "نقطة استقبال إشارات التنبيهات من TradingView والمنصات الخارجية",
+    description: "استقبال تشخيصي محمي؛ لا ينفذ صفقات ولا يمثل اتصالًا بمنصة تداول.",
   });
 }

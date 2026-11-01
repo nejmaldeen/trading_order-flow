@@ -95,8 +95,16 @@ export async function equityRange(symbol: SymbolName, start: number, end: number
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < EQUITY_START || end < start || end - start > 100 * DAY) throw new Error('نطاق الأسهم غير صالح؛ اختر فترة منذ 2016 لا تتجاوز 100 يوم.');
   end = Math.min(end, latestEquityMinute() + MINUTE - 1);
   const candles: Candle[] = [], sessions: MarketSession[] = [];
-  for (let t = Math.floor(start / (7 * DAY)) * 7 * DAY; t <= end; t += 7 * DAY) {
-    const b = await block(symbol, t); sessions.push(...b.sessions); candles.push(...b.candles.filter(c => c.openTime >= start && c.closeTime <= end));
+  const starts: number[] = [];
+  for (let t = Math.floor(start / (7 * DAY)) * 7 * DAY; t <= end; t += 7 * DAY) starts.push(t);
+  // Overlap network latency without flooding the provider; request() still gates starts.
+  // Promise.all retains chronological order and rejects incomplete ranges.
+  for (let i = 0; i < starts.length; i += 3) {
+    const blocks = await Promise.all(starts.slice(i, i + 3).map(t => block(symbol, t)));
+    for (const b of blocks) {
+      sessions.push(...b.sessions);
+      candles.push(...b.candles.filter(c => c.openTime >= start && c.closeTime <= end));
+    }
   }
   return { candles, sessions };
 }
