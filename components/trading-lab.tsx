@@ -267,6 +267,7 @@ export default function TradingLab() {
   const [showNewsMarkers, setShowNewsMarkers] = useState(true);
   const [balanceModalOpen, setBalanceModalOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [chartTheme, setChartTheme] = useState<ChartTheme>(CHART_THEMES["blue-white"]);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -541,6 +542,15 @@ export default function TradingLab() {
     actionBusy.current = true;
     setLoading(true); setDataReady(false); setPlaying(false); playingRef.current=false;
     try {
+      // Restore the durable revision even if the slower market-data request times out.
+      let stateResponse: Response;
+      try { stateResponse = await fetch('/api/lab', {cache:'no-store',signal:AbortSignal.timeout(10000)}); }
+      catch { stateResponse = await fetch('/api/lab', {cache:'no-store',signal:AbortSignal.timeout(10000)}); }
+      const saved = await stateResponse.json() as {state?:Workspace;error?:string};
+      if (!stateResponse.ok || !saved.state) throw new Error(saved.error || 'تعذر استعادة حالة الجلسة المحفوظة.');
+      workspaceRef.current=saved.state; setWorkspace(saved.state);
+      const savedSession=saved.state.sessions.find(s=>s.id===saved.state!.activeSessionId);
+      if(savedSession){setSymbol(savedSession.symbol);if(!startDateTouched.current)setStartDate(dateTimeInputValue(savedSession.startTime));}
       const response = await fetch(`/api/lab?timeframe=${timeframe}`, {cache:"no-store",signal:AbortSignal.timeout(60000)});
       const payload = await response.json() as {error?:string;state?:Workspace;candles?:Candle[];source?:string;macro?:MacroSnapshot};
       const nextWorkspace=payload.state ?? blank;
@@ -550,7 +560,7 @@ export default function TradingLab() {
       if(!response.ok) throw new Error(payload.error || "تعذر تحميل الجلسة.");
       setMacro(payload.macro??null); setCandles(payload.candles ?? []); setSource(payload.source ?? "");
       setDataReady(Boolean(payload.candles?.length)); setError(""); followChart.current=true;
-    } catch(err) { setError(err instanceof Error ? err.message : "تعذر الاتصال بالخادم."); }
+    } catch(err) { setError(err instanceof Error && ['TimeoutError','AbortError'].includes(err.name) ? 'انتهت مهلة تحميل أسعار السوق. لم يتغير وقت الجلسة؛ اضغط إعادة تحميل الجلسة للمحاولة مجددًا.' : err instanceof Error ? err.message : "تعذر الاتصال بالخادم."); }
     finally { actionBusy.current=false; setLoading(false); }
   }, [timeframe]);
 
@@ -617,8 +627,15 @@ export default function TradingLab() {
         signal: AbortSignal.timeout(60000),
       });
       const payload = (await response.json()) as { error?: string; state?: Workspace; candles?: Candle[]; source?: string; macro?:MacroSnapshot; conflict?: boolean };
-      if (!response.ok) { if(payload.conflict) setDataReady(false); throw new Error(payload.error ?? "لم يكتمل الإجراء."); }
+      if (!response.ok) {
+        if(payload.conflict){
+          if(payload.state){workspaceRef.current=payload.state;setWorkspace(payload.state);}
+          setDataReady(false);setPlaying(false);playingRef.current=false;
+        }
+        throw new Error(payload.error ?? "لم يكتمل الإجراء.");
+      }
       if (payload.state) { workspaceRef.current=payload.state; setWorkspace(payload.state); }
+      setMacro(payload.macro ?? null);
       if (payload.source) setSource(payload.source);
       if (body.action === "start" || body.action === "selectSession") {
         setCandles(payload.candles ?? []);
@@ -931,7 +948,7 @@ export default function TradingLab() {
 
     // Past released events
     const past = [...new Map([...macro.events.filter((e) => e.status === "released"), ...archiveEvents]
-      .filter((e) => e.time <= macro.cursor && candles.some((c) => c.openTime === Math.floor(e.time / duration) * duration))
+      .filter((e) => e.time <= macro.cursor && candles.some((c) => c.openTime <= e.time && e.time <= c.closeTime))
       .map((e) => [e.id, e])).values()].sort((a, b) => a.time - b.time);
 
     // Upcoming future events projected ahead on timeline
@@ -940,7 +957,7 @@ export default function TradingLab() {
       .map((e) => [e.id, e])).values()].sort((a, b) => a.time - b.time);
 
     const pastMarkers = past.map((e) => ({
-      time: (Math.floor(e.time / duration) * duration / 1000) as UTCTimestamp,
+      time: (candles.find(c => c.openTime <= e.time && e.time <= c.closeTime)!.openTime / 1000) as UTCTimestamp,
       position: "aboveBar" as const,
       color: "#94a3b8", // subtle, calm slate
       shape: "circle" as const,
@@ -1874,7 +1891,9 @@ export default function TradingLab() {
             }}
           />
           {/* Single Unified High-End Chart Control Bar */}
-          <div className="chart-toolbar">
+          <div className={`chart-toolbar ${toolsOpen ? "tools-expanded" : "tools-compact"}`}>
+            <button type="button" className="toolbar-btn workspace-tools-toggle" aria-expanded={toolsOpen} onClick={() => setToolsOpen(v => !v)}>{toolsOpen ? "طي الأدوات" : "الأدوات والعرض"}</button>
+            {focusMode && <button type="button" className="toolbar-btn" aria-expanded={layout.orderOpen} onClick={() => setLayout(v => ({...v,orderOpen:!v.orderOpen}))}>التداول والإعدادات</button>}
             <div className="chart-toolbar-left">
               <div className="symbol-meta">
                 <span className="market-icon">{SYMBOL_INFO[currentSymbol]?.icon ?? "B"}</span>

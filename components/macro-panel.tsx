@@ -41,7 +41,9 @@ export default function MacroPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const hourBucket = Math.floor(cursor / 3600000);
+  // Released snapshots arrive with every replay step; archive fetches only extend coverage.
+  const visibleEvents = [...new Map([...(data?.cursor === cursor ? data.events.filter(e => e.status === 'released') : []), ...(result?.events ?? [])]
+    .filter(e => e.time <= cursor && e.time >= cursor - hours * 3600000).map(e => [e.id, e])).values()].sort((a,b) => b.time-a.time);
 
   useEffect(() => {
     if (inspectRequest) setOpen(true);
@@ -63,8 +65,6 @@ export default function MacroPanel({
     const abort = new AbortController();
     setBusy(true);
     setError("");
-    setResult(null);
-    onEvents([]);
 
     fetch(`/api/news?cursor=${cursor}&hours=${hours}&sessionId=${encodeURIComponent(sessionId)}`, {
       signal: abort.signal,
@@ -88,7 +88,7 @@ export default function MacroPanel({
       });
 
     return () => abort.abort();
-  }, [hourBucket, open, hours, retry, inspectRequest, sessionId, onEvents]);
+  }, [cursor, hours, retry, sessionId, onEvents]);
 
   const stale = !!result && result.cursor !== cursor;
   const next = data?.cursor === cursor ? data.events.find((e) => e.status === "upcoming") : undefined;
@@ -110,7 +110,7 @@ export default function MacroPanel({
       <button className="macro-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className="macro-toggle-title">
           <span className="macro-dot"></span>
-          <span>أثر الأخبار الكبرى على BTC</span>
+          <span>الأخبار والإصدارات الرسمية</span>
         </span>
         <span className="macro-toggle-status">
           {next ? (
@@ -118,7 +118,7 @@ export default function MacroPanel({
               ⚠️ {next.title} · {format(next.time)}
             </span>
           ) : (
-            <span className="next-event-chip">BTC Macro Engine</span>
+            <span className="next-event-chip">{visibleEvents.length ? `${visibleEvents.length} إصدار خلال الفترة` : 'تغطية محدودة · عرض التفاصيل'}</span>
           )}
           <span className="toggle-action-badge">{open ? "إغلاق" : "فحص وتحليل"}</span>
         </span>
@@ -133,7 +133,7 @@ export default function MacroPanel({
             <header className="macro-drawer-header">
               <div className="drawer-title-group">
                 <div className="drawer-badge-row">
-                  <span className="badge-category">BTC / Macro Intelligence</span>
+                  <span className="badge-category">إصدارات اقتصادية · وقت المحاكاة</span>
                   <span className="badge-source">أبحاث SSRN + الفيدرالي + BLS</span>
                 </div>
                 <h3 className="drawer-main-title">تحليل الأخبار الاقتصادية الكبرى وأثرها</h3>
@@ -185,6 +185,8 @@ export default function MacroPanel({
 
             {busy && <div className="drawer-notice busy">جارِ استرجاع الإصدارات التاريخية وتحليل الأثر الإحصائي…</div>}
             {error && <div className="drawer-notice error" role="alert">{error}</div>}
+            <div className="drawer-notice">{data?.coverage} أخبار الشركات تعتمد على إفصاحات SEC المتاحة، ولا تمثل جميع أخبار الشركة أو موعد الإعلان الأول.</div>
+            {result?.coverage.filter(c=>!c.ok).map(c=><div key={`${c.source}:${c.month}`} className="drawer-notice error">{c.source} · {c.month}: {c.error || 'التغطية غير متاحة'}</div>)}
             {stale && <div className="drawer-notice stale">تغير وقت المحاكاة. اضغط تحديث للمزامنة اللحظية.</div>}
 
             {/* Drawer Body Scrollable Content */}
@@ -207,16 +209,16 @@ export default function MacroPanel({
                 </div>
               )}
 
-              {result && !stale && (
+              {data?.cursor === cursor && (
                 <div className="drawer-events-list">
-                  {!result.events.length && (
+                  {!visibleEvents.length && (
                     <div className="drawer-empty-state">
-                      <p>لم تصدر بيانات رسمية كبرى خلال هذه الفترة المحددة ({hours} ساعة).</p>
+                      <p>لا توجد إصدارات ضمن البيانات المتاحة لهذه الفترة ({hours} ساعة). هذا لا يثبت عدم وجود أخبار.</p>
                       <small>يمكنك توسيع نطاق الفحص إلى 3 أيام أو أسبوع لرؤية الإصدارات السابقة.</small>
                     </div>
                   )}
 
-                  {result.events.map((e) => {
+                  {visibleEvents.map((e) => {
                     const impact = getHistoricalImpact(e);
                     return (
                       <article key={e.id} className="drawer-event-card">
@@ -234,6 +236,12 @@ export default function MacroPanel({
                           </div>
                         </div>
 
+                        <div className="drawer-notice">
+                          <b>ماذا صدر فعلًا؟</b>
+                          <p>{e.summary || 'خلاصة الإصدار غير متوفرة؛ راجع المصدر الرسمي.'}</p>
+                          <a href={e.source} target="_blank" rel="noreferrer">المصدر الأصلي ↗</a>
+                        </div>
+                        <details className="drawer-academic-accordion"><summary>تفسير عام وسيناريوهات · ليس خلاصة الإصدار</summary>
                         {/* Executive Summary (Quick Takeaway) */}
                         <div className="drawer-quick-verdict">
                           <div className="verdict-label">
@@ -332,6 +340,7 @@ export default function MacroPanel({
                               </a>
                             </div>
                           </div>
+                        </details>
                         </details>
                       </article>
                     );
