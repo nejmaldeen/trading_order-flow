@@ -21,7 +21,7 @@ export async function archiveMonth(kind:NewsSource,month:string):Promise<Cached>
 
   const db=getWorkerDb();
   if(!db) {
-    return archived ?? { records: [] };
+    return archived ?? { records: [], error: 'هذا الشهر غير مغطى في الأرشيف المرفق؛ لا يتوفر تحديث لهذا المصدر في هذه البيئة.' };
   }
 
   const previous = (await db.prepare('SELECT payload, fetched_at FROM news_archive WHERE cache_key = ?').bind(key).first()) as {payload:string;fetched_at:string} | null;

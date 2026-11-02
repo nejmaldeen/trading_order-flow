@@ -6,6 +6,7 @@ import {eq} from 'drizzle-orm';
 import {activeSession,normalizeWorkspace} from '@/lib/replay';
 import {archiveMonth} from '@/lib/news-store';
 import {verifiedReports} from '@/lib/news-reports';
+import {companyNews} from '@/lib/company-news';
 import {monthsFor,selectNews,type NewsRecord,type NewsCoverage} from '@/lib/news-archive';
 export const dynamic='force-dynamic';
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
@@ -18,7 +19,9 @@ export async function GET(request:Request){
   const row=await (await getDb()).select().from(workspaces).where(eq(workspaces.ownerId,id)).limit(1);
   const session=row[0]?activeSession(normalizeWorkspace(JSON.parse(row[0].stateJson))):null;
   if(!session||session.id!==q.get('sessionId')||cursor>session.cursorTime)return json({error:'تغيرت الجلسة؛ أعد الفحص'},409);
-  const records:NewsRecord[]=[...verifiedReports],coverage:NewsCoverage[]=[];
+  const records:NewsRecord[]=session.symbol.endsWith('USDT')?[...verifiedReports]:[],coverage:NewsCoverage[]=[];
+  const company=await companyNews(session.symbol,cursor,hours);
+  if(company){records.push(...company.events);coverage.push(company.coverage);}
   await Promise.all(monthsFor(cursor,hours).flatMap(month=>(['cpi','ppi','empsit','fed'] as const).map(async source=>{
    const result=await archiveMonth(source,month);records.push(...result.records);coverage.push({source,month,ok:!result.error,...(result.error?{error:result.error}:{})});
   })));

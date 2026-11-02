@@ -267,6 +267,7 @@ export default function TradingLab() {
   const [showNewsMarkers, setShowNewsMarkers] = useState(true);
   const [balanceModalOpen, setBalanceModalOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [chartTheme, setChartTheme] = useState<ChartTheme>(CHART_THEMES["blue-white"]);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -619,6 +620,7 @@ export default function TradingLab() {
       const payload = (await response.json()) as { error?: string; state?: Workspace; candles?: Candle[]; source?: string; macro?:MacroSnapshot; conflict?: boolean };
       if (!response.ok) { if(payload.conflict) setDataReady(false); throw new Error(payload.error ?? "لم يكتمل الإجراء."); }
       if (payload.state) { workspaceRef.current=payload.state; setWorkspace(payload.state); }
+      setMacro(payload.macro ?? null);
       if (payload.source) setSource(payload.source);
       if (body.action === "start" || body.action === "selectSession") {
         setCandles(payload.candles ?? []);
@@ -931,7 +933,7 @@ export default function TradingLab() {
 
     // Past released events
     const past = [...new Map([...macro.events.filter((e) => e.status === "released"), ...archiveEvents]
-      .filter((e) => e.time <= macro.cursor && candles.some((c) => c.openTime === Math.floor(e.time / duration) * duration))
+      .filter((e) => e.time <= macro.cursor && candles.some((c) => c.openTime <= e.time && e.time <= c.closeTime))
       .map((e) => [e.id, e])).values()].sort((a, b) => a.time - b.time);
 
     // Upcoming future events projected ahead on timeline
@@ -940,7 +942,7 @@ export default function TradingLab() {
       .map((e) => [e.id, e])).values()].sort((a, b) => a.time - b.time);
 
     const pastMarkers = past.map((e) => ({
-      time: (Math.floor(e.time / duration) * duration / 1000) as UTCTimestamp,
+      time: (candles.find(c => c.openTime <= e.time && e.time <= c.closeTime)!.openTime / 1000) as UTCTimestamp,
       position: "aboveBar" as const,
       color: "#94a3b8", // subtle, calm slate
       shape: "circle" as const,
@@ -1874,7 +1876,9 @@ export default function TradingLab() {
             }}
           />
           {/* Single Unified High-End Chart Control Bar */}
-          <div className="chart-toolbar">
+          <div className={`chart-toolbar ${toolsOpen ? "tools-expanded" : "tools-compact"}`}>
+            <button type="button" className="toolbar-btn workspace-tools-toggle" aria-expanded={toolsOpen} onClick={() => setToolsOpen(v => !v)}>{toolsOpen ? "طي الأدوات" : "الأدوات والعرض"}</button>
+            {focusMode && <button type="button" className="toolbar-btn" aria-expanded={layout.orderOpen} onClick={() => setLayout(v => ({...v,orderOpen:!v.orderOpen}))}>التداول والإعدادات</button>}
             <div className="chart-toolbar-left">
               <div className="symbol-meta">
                 <span className="market-icon">{SYMBOL_INFO[currentSymbol]?.icon ?? "B"}</span>

@@ -3161,11 +3161,9 @@ html, body {
    ======================================================== */
 .focus-mode-active .topbar,
 .focus-mode-active .statusbar,
-.focus-mode-active .right-panel,
 .focus-mode-active .order-resizer,
 .focus-mode-active .history-resizer,
-.focus-mode-active .history-panel,
-.focus-mode-active .replay-panel {
+.focus-mode-active .history-panel {
   display: none !important;
 }
 
@@ -3190,8 +3188,24 @@ html, body {
 
 .focus-mode-active .chart-area {
   flex: 1 1 100% !important;
-  height: calc(100vh - 74px) !important;
+  min-height: 200px !important;
+  height: auto !important;
 }
+
+/* Quiet workspace: every original tool stays available behind one disclosure. */
+.tools-compact .chart-toolbar-left > :not(.symbol-meta):not(.timeframe-selector-strip),
+.tools-compact .chart-toolbar-right > :not(.focus-toggle-btn):not(.inspect-news) { display:none; }
+.workspace-tools-toggle { white-space:nowrap; }
+.chart-toolbar.tools-expanded { max-height:32vh; overflow:auto; align-content:flex-start; }
+.chart-toolbar .active { box-shadow:none; }
+.chart-toolbar .svp-mode-btn.active { background:#26333a; border-color:#52616b; color:#d5dfe5; }
+.focus-mode-active .replay-panel { display:block !important; position:relative; flex-shrink:0; }
+.focus-mode-active .right-panel { position:fixed; z-index:100; inset:60px 12px 90px auto; width:min(360px,90vw); max-height:75vh; overflow:auto; }
+.focus-mode-active .workspace-grid { grid-template-columns:auto minmax(0,1fr) !important; }
+.focus-mode-active .main-stage { display:flex; flex-direction:column; min-height:0; }
+.macro-panel .event-meta-tags, .macro-panel .drawer-volatility-warning { opacity:.8; }
+.macro-panel .drawer-event-card { border-color:#34404a; box-shadow:none; }
+.macro-panel .drawer-notice p { line-height:1.8; color:#d3dce3; }
 
 .focus-mode-exit-pill {
   position: absolute !important;
