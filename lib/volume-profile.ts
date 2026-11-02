@@ -32,6 +32,8 @@ export function computeVolumeProfile(
   bucketCount = 48,
   valueAreaRatio = 0.70
 ): VolumeProfileResult | null {
+  if (!Number.isInteger(bucketCount) || bucketCount < 1 || bucketCount > 65536 ||
+      !Number.isFinite(valueAreaRatio) || valueAreaRatio <= 0 || valueAreaRatio > 1) return null;
   if (!candles.length) return null;
 
   let minPrice = Infinity;
@@ -39,17 +41,20 @@ export function computeVolumeProfile(
   let totalVolume = 0;
 
   for (const c of candles) {
+    if (![c.low, c.high, c.open, c.close, c.volume].every(Number.isFinite) || c.low > c.high || c.volume < 0) return null;
     if (c.low < minPrice) minPrice = c.low;
     if (c.high > maxPrice) maxPrice = c.high;
     totalVolume += c.volume;
   }
 
-  if (minPrice >= maxPrice || totalVolume <= 0 || !Number.isFinite(minPrice) || !Number.isFinite(maxPrice)) {
+  if (minPrice > maxPrice || !Number.isFinite(totalVolume) || totalVolume <= 0 || !Number.isFinite(minPrice) || !Number.isFinite(maxPrice)) {
     return null;
   }
 
+  if (minPrice === maxPrice) bucketCount = 1;
   const range = maxPrice - minPrice;
   const step = range / bucketCount;
+  if (!Number.isFinite(step) || (range > 0 && step === 0)) return null;
 
   // Initialize buckets
   const rawBuckets: { price: number; buy: number; sell: number; total: number }[] = [];
@@ -63,11 +68,11 @@ export function computeVolumeProfile(
   }
 
   // Distribute each candle's volume across intersected buckets
+  let remainingUpdates = 10_000_000;
   for (const c of candles) {
     if (c.volume <= 0) continue;
     const cHigh = Math.min(c.high, maxPrice);
     const cLow = Math.max(c.low, minPrice);
-    const candleSpan = Math.max(cHigh - cLow, step * 0.5);
 
     // Estimate buy vs sell volume based on close vs open and range
     const isBullish = c.close >= c.open;
@@ -77,10 +82,12 @@ export function computeVolumeProfile(
     const buyVol = isBullish ? c.volume * deltaRatio : c.volume * (1 - deltaRatio);
     const sellVol = c.volume - buyVol;
 
-    const minIdx = Math.max(0, Math.min(bucketCount - 1, Math.floor((cLow - minPrice) / step)));
-    const maxIdx = Math.max(0, Math.min(bucketCount - 1, Math.floor((cHigh - minPrice) / step)));
+    const minIdx = step === 0 ? 0 : Math.max(0, Math.min(bucketCount - 1, Math.floor((cLow - minPrice) / step)));
+    const maxIdx = step === 0 ? 0 : Math.max(0, Math.min(bucketCount - 1, Math.floor((cHigh - minPrice) / step)));
 
     const count = maxIdx - minIdx + 1;
+    remainingUpdates -= count;
+    if (remainingUpdates < 0) return null;
     const volPerBucket = c.volume / count;
     const buyPerBucket = buyVol / count;
     const sellPerBucket = sellVol / count;
@@ -114,14 +121,13 @@ export function computeVolumeProfile(
     const nextUpVol = upIdx < bucketCount - 1 ? rawBuckets[upIdx + 1].total : -1;
     const nextDownVol = downIdx > 0 ? rawBuckets[downIdx - 1].total : -1;
 
-    if (nextUpVol >= nextDownVol && nextUpVol > 0) {
+    // Equal neighbors expand upward. Each step consumes one remaining bucket.
+    if (nextUpVol >= nextDownVol) {
       upIdx++;
       currentVaVolume += nextUpVol;
-    } else if (nextDownVol > 0) {
+    } else {
       downIdx--;
       currentVaVolume += nextDownVol;
-    } else {
-      break;
     }
   }
 
