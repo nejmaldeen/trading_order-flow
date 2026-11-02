@@ -91,7 +91,7 @@ export async function POST(request:Request){
     const body=envelope.data;const input=actionSchema.safeParse(body);
     if(!input.success)return json({error:"الطلب غير مكتمل أو يحتوي قيمًا غير صالحة."},400);
     const {state,previous}=await readWorkspace(id);
-    if(body.revision!==state.revision)return json({error:"تغيرت الجلسة. أعد تحميلها قبل تكرار الإجراء.",conflict:true},409);
+    if(body.revision!==state.revision)return json({state,error:"تغيرت الجلسة. تمت مزامنة حالتها؛ أعد تحميل الشموع قبل تنفيذ إجراء جديد.",conflict:true},409);
     const data=input.data;
     let session=activeSession(state);
     let extra:Record<string,unknown>={};
@@ -297,7 +297,7 @@ export async function POST(request:Request){
         }
       }
     }
-    if(!await saveWorkspace(id,state,previous))return json({error:"حُفظ إجراء آخر بالتزامن. أعد تحميل الجلسة.",conflict:true},409);
+    if(!await saveWorkspace(id,state,previous))return json({state:(await readWorkspace(id)).state,error:"حُفظ إجراء آخر بالتزامن. تمت مزامنة الحالة؛ أعد تحميل الشموع. لم يُكرر الأمر.",conflict:true},409);
     return json({state,...extra,macro:session?macroAt(session.cursorTime):null});
   }catch(err){return json({error:err instanceof Error?err.message:"تعذر إكمال الإجراء."},err instanceof MarketError?502:500);}
 }

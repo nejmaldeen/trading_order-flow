@@ -139,7 +139,10 @@ export const marketData: MarketProvider = async (symbol,interval,start,end) => {
       const offline = await offlineMarketData(symbol, interval, start, safeEnd);
       if (offline.candles.length > 0) return offline;
     } catch {}
-    throw new MarketError(`${apiError}. ${err instanceof Error?err.message:"تعذر تحميل الأرشيف"} لم يتغير وقت المحاكاة.`);
+    const detail=err instanceof Error && ['TimeoutError','AbortError'].includes(err.name)
+      ? 'انتهت مهلة الاتصال بأرشيف الأسعار'
+      : err instanceof Error?err.message:'تعذر تحميل الأرشيف';
+    throw new MarketError(`تعذر تحميل أسعار ${symbol} من Binance والأرشيف. ${detail}. لم يتغير وقت المحاكاة؛ أعد المحاولة أو افحص اتصال الشبكة. (${apiError})`);
   }
 };
 export async function chartHistory(session:Session,timeframe:Timeframe,provider:MarketProvider=marketData) {

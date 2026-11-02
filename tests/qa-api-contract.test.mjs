@@ -20,7 +20,10 @@ test('isolated HTTP contract: crypto, races, repeat requests and failed writes',
     assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
     state=results.find(r=>r.status===200).body.state;
     assert.equal(state.sessions.find(s=>s.id===state.activeSessionId).cursorTime,startTime+59999);
-    assert.equal((await post(body)).status,409);assert.deepEqual(await get(),state);
+    const stale=await post(body);
+    assert.equal(stale.status,409);assert.equal(stale.body.conflict,true);
+    assert.deepEqual(stale.body.state,state,'stale mutation returns the durable state for client recovery without executing again');
+    assert.deepEqual(await get(),state);
     const failed=await post({revision:state.revision,action:'buy',notional:99999,stopLoss:1,takeProfit:1e9});
     assert.equal(failed.status,400);assert.deepEqual(await get(),state);
   }

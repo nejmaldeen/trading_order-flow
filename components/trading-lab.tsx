@@ -542,6 +542,15 @@ export default function TradingLab() {
     actionBusy.current = true;
     setLoading(true); setDataReady(false); setPlaying(false); playingRef.current=false;
     try {
+      // Restore the durable revision even if the slower market-data request times out.
+      let stateResponse: Response;
+      try { stateResponse = await fetch('/api/lab', {cache:'no-store',signal:AbortSignal.timeout(10000)}); }
+      catch { stateResponse = await fetch('/api/lab', {cache:'no-store',signal:AbortSignal.timeout(10000)}); }
+      const saved = await stateResponse.json() as {state?:Workspace;error?:string};
+      if (!stateResponse.ok || !saved.state) throw new Error(saved.error || 'تعذر استعادة حالة الجلسة المحفوظة.');
+      workspaceRef.current=saved.state; setWorkspace(saved.state);
+      const savedSession=saved.state.sessions.find(s=>s.id===saved.state!.activeSessionId);
+      if(savedSession){setSymbol(savedSession.symbol);if(!startDateTouched.current)setStartDate(dateTimeInputValue(savedSession.startTime));}
       const response = await fetch(`/api/lab?timeframe=${timeframe}`, {cache:"no-store",signal:AbortSignal.timeout(60000)});
       const payload = await response.json() as {error?:string;state?:Workspace;candles?:Candle[];source?:string;macro?:MacroSnapshot};
       const nextWorkspace=payload.state ?? blank;
@@ -551,7 +560,7 @@ export default function TradingLab() {
       if(!response.ok) throw new Error(payload.error || "تعذر تحميل الجلسة.");
       setMacro(payload.macro??null); setCandles(payload.candles ?? []); setSource(payload.source ?? "");
       setDataReady(Boolean(payload.candles?.length)); setError(""); followChart.current=true;
-    } catch(err) { setError(err instanceof Error ? err.message : "تعذر الاتصال بالخادم."); }
+    } catch(err) { setError(err instanceof Error && ['TimeoutError','AbortError'].includes(err.name) ? 'انتهت مهلة تحميل أسعار السوق. لم يتغير وقت الجلسة؛ اضغط إعادة تحميل الجلسة للمحاولة مجددًا.' : err instanceof Error ? err.message : "تعذر الاتصال بالخادم."); }
     finally { actionBusy.current=false; setLoading(false); }
   }, [timeframe]);
 
@@ -618,7 +627,13 @@ export default function TradingLab() {
         signal: AbortSignal.timeout(60000),
       });
       const payload = (await response.json()) as { error?: string; state?: Workspace; candles?: Candle[]; source?: string; macro?:MacroSnapshot; conflict?: boolean };
-      if (!response.ok) { if(payload.conflict) setDataReady(false); throw new Error(payload.error ?? "لم يكتمل الإجراء."); }
+      if (!response.ok) {
+        if(payload.conflict){
+          if(payload.state){workspaceRef.current=payload.state;setWorkspace(payload.state);}
+          setDataReady(false);setPlaying(false);playingRef.current=false;
+        }
+        throw new Error(payload.error ?? "لم يكتمل الإجراء.");
+      }
       if (payload.state) { workspaceRef.current=payload.state; setWorkspace(payload.state); }
       setMacro(payload.macro ?? null);
       if (payload.source) setSource(payload.source);
